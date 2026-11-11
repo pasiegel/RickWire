@@ -1,0 +1,162 @@
+# Builds every RickWire client. Push / PR: test + build, files under the run's "Artifacts".
+# Tag vX.Y.Z (matching rickwire/__init__.py): also publishes a GitHub Release with the files attached.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  windows:
+    name: Windows (installer + portable zip)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Create build environment
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python -m pip install --upgrade pip
+          .venv\Scripts\python -m pip install -r requirements-windows.txt
+
+      - name: Security tests
+        shell: pwsh
+        run: |
+          .venv\Scripts\python tests\audit_provider_security.py
+          if ($LASTEXITCODE) { throw "provider key audit failed" }
+          .venv\Scripts\python tests\dev\t_remote.py
+          if ($LASTEXITCODE) { throw "login / proxy tests failed" }
+          .venv\Scripts\python tests\dev\t_phoneurl.py
+          if ($LASTEXITCODE) { throw "phone address tests failed" }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Build
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # only for the ffmpeg / Deno release lookups
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
+          if ($LASTEXITCODE) { throw "build.ps1 failed" }
+          if (-not (Get-ChildItem dist -Filter "RickWire-Setup-*.exe")) { throw "installer missing" }
+          if (-not (Test-Path dist\RickWire-portable.zip)) { throw "portable zip missing" }
+
+      - name: Smoke test the built exe
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\RickWire\RickWire.exe -ArgumentList "--help" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "RickWire.exe --help exited with $($p.ExitCode)" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/RickWire-Setup-*.exe
+            dist/RickWire-portable.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux (portable tarball)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build package
+        run: python packaging/make_linux_portable.py
+
+      - name: Smoke test (unpack, install, import, --help)
+        run: |
+          mkdir -p "$RUNNER_TEMP/rw" && tar xzf dist/RickWire-linux-portable.tar.gz -C "$RUNNER_TEMP/rw"
+          cd "$RUNNER_TEMP/rw/RickWire"
+          test -x run.sh
+          python -m venv venv
+          venv/bin/pip install -q -r requirements.txt
+          venv/bin/python -c "import rickwire.app, rickwire.server, rickwire.desktop, rickwire.associate, rickwire.tools; print('imports OK')"
+          venv/bin/python run.py --help
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/RickWire-linux-portable.tar.gz
+          if-no-files-found: error
+
+  macos:
+    # Off until the Mac port lands: then add the repository variable BUILD_MAC = true.
+    # packaging/mac/build_mac.sh must leave the .dmg in dist/.
+    name: macOS (.dmg)
+    if: vars.BUILD_MAC == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash packaging/mac/build_mac.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v') && !cancelled() && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result != 'failure'
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches the app version
+        run: |
+          v=$(python3 -c "import re; print(re.search(r'__version__ = \"(.+?)\"', open('rickwire/__init__.py').read())[1])")
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then echo "::error::tag $GITHUB_REF_NAME but rickwire/__init__.py says $v"; exit 1; fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: RickWire ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist/*

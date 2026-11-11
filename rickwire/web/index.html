@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#070a12">
+  <title>RickWire</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="portal" aria-hidden="true"></div>
+    <div class="brand">
+      <h1>Rick<span>Wire</span></h1>
+      <div class="quote" id="quote"></div>
+    </div>
+    <div class="spacer"></div>
+    <span class="pill" id="conn">connecting…</span>
+    <button class="btn admin-only hidden" id="pairBtn" title="Pair a phone"><span>📱</span><span class="label">Pair phone</span></button>
+    <button class="btn admin-only hidden" id="settingsBtn" title="Settings"><span>⚙</span><span class="label">Settings</span></button>
+    <button class="btn hidden" id="signOutBtn" title="Sign out"><span>⏏</span><span class="label">Sign out</span></button>
+  </header>
+
+  <nav class="views" id="views">
+    <button data-v="queue" class="on">🌀 Queue <span class="count" id="qCount"></span></button>
+    <button data-v="search">🔍 Search</button>
+    <button data-v="news">🆕 Latest</button>
+  </nav>
+
+  <main id="view-search" class="hidden">
+    <form class="card add" id="searchForm">
+      <div class="add-row">
+        <input type="text" id="searchQ" placeholder="Search the multiverse for torrents… (BT4G)" autocomplete="off" style="flex:1;min-width:200px">
+        <select id="searchSort" title="Sort">
+          <option value="relevance">Relevance</option><option value="seeders">Most seeders</option>
+          <option value="size">Biggest</option><option value="time">Newest</option>
+        </select>
+        <select id="searchCat" title="Category">
+          <option value="all">All types</option><option value="movie">Video</option><option value="audio">Audio</option>
+          <option value="app">Apps</option><option value="doc">Docs</option><option value="other">Other</option>
+        </select>
+        <button class="btn go" type="submit">Search ➜</button>
+      </div>
+      <div class="add-row">
+        <button class="btn cacheBtn" type="button" data-for="searchResults" title="Ask your debrid which of these it already has (they download instantly)">⚡ Check cache</button>
+        <label class="check" title="When it finishes, rename and move it into Movies\Title (Year)\ or TV\Show\Season 02\ inside your download folder"><input type="checkbox" class="sortPref"> 🏷 Rename &amp; sort</label>
+      </div>
+      <div class="drop-hint">Results come from BT4G's public RSS (top 15 per search). Adding one sends the magnet through your debrid like any other.
+        ⚡ = already cached at your debrid, downloads instantly.</div>
+    </form>
+    <section class="results" id="searchResults"></section>
+  </main>
+
+  <main id="view-news" class="hidden">
+    <div class="bar" style="margin-top:4px">
+      <div class="tabs" id="newsTabs">
+        <button data-n="yts" class="on">🎬 Movies · YTS</button>
+        <button data-n="eztv">📺 TV · EZTV</button>
+      </div>
+      <div class="spacer"></div>
+      <div id="ytsTools" class="inline">
+        <input type="text" id="ytsQ" placeholder="Filter movies…" style="width:170px">
+        <select id="ytsSort"><option value="latest">Latest</option><option value="rating">Top rated</option>
+          <option value="seeds">Most seeded</option><option value="downloads">Most downloaded</option><option value="year">Newest year</option></select>
+        <select id="ytsQuality"><option value="all">Any quality</option><option>720p</option><option>1080p</option><option>2160p</option></select>
+      </div>
+      <div id="eztvTools" class="inline hidden">
+        <div class="suggest-wrap">
+          <input type="search" id="eztvQ" placeholder="Search a show…" autocomplete="off" style="width:220px">
+          <div class="suggest hidden" id="eztvSugg"></div>
+        </div>
+        <select id="eztvQuality"><option value="">Any quality</option><option>480p</option><option>720p</option><option>1080p</option><option>2160p</option></select>
+      </div>
+      <button class="btn icon" id="newsRefresh" title="Refresh">⟳</button>
+    </div>
+    <div class="bar">
+      <button class="btn cacheBtn" type="button" data-for="news" title="Ask your debrid which of these it already has (they download instantly)">⚡ Check cache</button>
+      <label class="check" title="When it finishes, rename and move it into Movies\Title (Year)\ or TV\Show\Season 02\ inside your download folder"><input type="checkbox" class="sortPref"> 🏷 Rename &amp; sort</label>
+    </div>
+    <section class="posters" id="ytsGrid"></section>
+    <div style="text-align:center;margin-top:14px"><button class="btn hidden" id="ytsMore">Load more from the Citadel…</button></div>
+    <div class="show-chip hidden" id="eztvShow"></div>
+    <section class="results hidden" id="eztvList"></section>
+    <div style="text-align:center;margin-top:14px"><button class="btn hidden" id="eztvMore">Older episodes…</button></div>
+  </main>
+
+  <main id="view-queue">
+    <section class="card add">
+      <textarea id="links" placeholder="Paste magnets, MEGA, Gofile, hoster links, YouTube, Tubi, archive.org, .mpd/.m3u8 manifests… one per line"></textarea>
+      <div class="add-row">
+        <select id="mode" title="How to fetch">
+          <option value="auto">🌀 Auto-detect</option>
+          <option value="debrid">🔓 Debrid unrestrict</option>
+          <option value="ytdlp">📺 yt-dlp (media)</option>
+          <option value="native">Ⓜ Native (MEGA/Gofile)</option>
+          <option value="direct">🔗 Direct HTTP</option>
+        </select>
+        <select id="provider" title="Debrid provider"></select>
+        <label class="check"><input type="checkbox" id="audioOnly"> Audio only</label>
+        <label class="check" title="When it finishes, rename and move it into Movies\Title (Year)\ or TV\Show\Season 02\ inside your download folder"><input type="checkbox" class="sortPref"> 🏷 Rename &amp; sort</label>
+        <div class="spacer"></div>
+        <button class="btn" id="torrentBtn" title="Upload .torrent files">🧲 .torrent</button>
+        <input type="file" id="torrentFile" accept=".torrent,application/x-bittorrent" multiple hidden>
+        <button class="btn go" id="addBtn">⬇ Download</button>
+      </div>
+      <div class="drop-hint">Tip: drop .torrent files anywhere. Magnet links clicked in your browser open straight into the queue.</div>
+    </section>
+
+    <div class="bar">
+      <div class="tabs" id="tabs">
+        <button data-f="all" class="on">All</button>
+        <button data-f="active">Active</button>
+        <button data-f="done">Done</button>
+        <button data-f="error">Problems</button>
+      </div>
+      <div class="spacer"></div>
+      <span class="stats" id="stats"></span>
+      <button class="btn hidden" id="retryBtn" title="Try every failed download again">↻ Retry failed</button>
+      <button class="btn" id="clearBtn">🧹 Clear finished</button>
+    </div>
+
+    <section class="jobs" id="jobs"></section>
+    <div class="empty hidden" id="empty">
+      <div class="portal"></div>
+      <div id="emptyText">Nothing in the queue. Paste a link and open a portal, Morty.</div>
+    </div>
+  </main>
+
+  <!-- provider picker -->
+  <dialog id="pickDlg">
+    <div class="dlg-head"><div class="portal"></div><h2>Which dimension, Morty?</h2></div>
+    <div class="dlg-body">
+      <div class="hint" id="pickName"></div>
+      <div class="choices" id="pickChoices"></div>
+      <label class="check"><input type="checkbox" id="pickRemember"> Don't ask again — use this one by default</label>
+    </div>
+    <div class="dlg-foot"><button class="btn" id="pickLater">Later</button></div>
+  </dialog>
+
+  <!-- file picker -->
+  <dialog id="filesDlg" class="wide">
+    <div class="dlg-head"><h2>☑ Which files, Morty?</h2></div>
+    <div class="dlg-body">
+      <div class="hint" id="filesName"></div>
+      <div class="inline">
+        <button class="btn" type="button" id="filesAll">All</button>
+        <button class="btn" type="button" id="filesNone">None</button>
+        <button class="btn" type="button" id="filesVideo">Videos only</button>
+        <input type="search" id="filesFilter" placeholder="Filter (e.g. S02E07)…" style="flex:1;min-width:140px">
+      </div>
+      <div class="file-pick" id="filesList"></div>
+    </div>
+    <div class="dlg-foot"><span class="hint" id="filesTotal"></span><div class="spacer"></div>
+      <button class="btn" id="filesLater">Later</button><button class="btn go" id="filesGo">⬇ Download selected</button></div>
+  </dialog>
+
+  <!-- rename & sort preview -->
+  <dialog id="sortDlg" class="wide">
+    <div class="dlg-head"><h2>🏷 Rename &amp; sort</h2></div>
+    <div class="dlg-body">
+      <div class="hint" id="sortName"></div>
+      <div class="sort-plan" id="sortPlan"></div>
+    </div>
+    <div class="dlg-foot"><div class="spacer"></div><button class="btn" data-close>Cancel</button><button class="btn go" id="sortGo">Move files</button></div>
+  </dialog>
+
+  <!-- pairing -->
+  <dialog id="pairDlg">
+    <div class="dlg-head"><h2>📱 Pair a phone</h2><button class="btn icon" data-close>✕</button></div>
+    <div class="dlg-body">
+      <div class="pair-box">
+        <img id="pairQr" alt="Pairing QR code">
+        <div class="code" id="pairCode">------</div>
+        <div class="hint">Scan with your phone camera<span id="pairTypeHint">, or open <b id="pairUrl"></b> and type the code</span>.<br>Expires in <b id="pairTtl">5:00</b>. <span id="pairWhere">Phone must be on your home Wi-Fi.</span></div>
+        <div class="hint" id="caHint">First time? Install the <a href="/rickwire-ca.crt" id="caLink">RickWire certificate</a> on the phone so the app can be installed and shared to. See README.</div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- confirm remove -->
+  <dialog id="rmDlg">
+    <div class="dlg-head"><h2>Remove download?</h2></div>
+    <div class="dlg-body">
+      <div id="rmName" class="hint"></div>
+      <label class="check admin-only hidden"><input type="checkbox" id="rmFiles"> Also delete downloaded files</label>
+    </div>
+    <div class="dlg-foot"><button class="btn" data-close>Cancel</button><button class="btn danger" id="rmGo">Remove</button></div>
+  </dialog>
+
+  <!-- first-run setup -->
+  <dialog id="setupDlg" class="wide">
+    <div class="dlg-head"><div class="portal"></div><h2 id="wzTitle">Welcome to RickWire</h2>
+      <div class="spacer"></div><span class="hint" id="wzStep"></span></div>
+    <div class="dlg-body">
+      <section class="wz" data-step="welcome">
+        <p class="lead">Wubba lubba dub dub! Let's get you set up. It takes about a minute.</p>
+        <p>RickWire downloads in two ways:</p>
+        <ul class="wz-list">
+          <li><b>🧲 Torrents, magnets and file-hoster links</b> (MEGA, Rapidgator, 1fichier…) go through a
+            <b>debrid service</b>. That's a paid account (usually a few dollars a month) that fetches the file on its own fast servers,
+            then RickWire pulls it down to your PC over HTTPS. Your PC never joins the torrent swarm.</li>
+          <li><b>📺 YouTube, Tubi, archive.org, .mpd / .m3u8 and other media links</b> use yt-dlp and work
+            <b>without</b> a debrid account.</li>
+        </ul>
+        <p class="hint">Your API key is stored in <span class="kr">Windows Credential Manager</span>. It is never written to a file, never shown
+          again and never sent to your phone.</p>
+      </section>
+
+      <section class="wz hidden" data-step="provider">
+        <p class="lead">Pick your debrid service</p>
+        <p class="hint">Already have an account? Choose it and paste your API key. Don't have one yet? Use <b>Sign up</b>,
+          or skip and add it later in ⚙ Settings.</p>
+        <div class="wz-provs" id="wzProvs"></div>
+        <div id="wzProvCard"></div>
+      </section>
+
+      <section class="wz hidden" data-step="tools">
+        <p class="lead">Media tools</p>
+        <p class="hint">For YouTube and other media sites RickWire uses yt-dlp, ffmpeg (joins video and audio) and Deno
+          (YouTube requires it). They come from each project's official GitHub releases, and every file's checksum is
+          checked before use.</p>
+        <div class="tools" id="wzTools"></div>
+        <div class="inline"><button class="btn go" id="wzToolsGet">⬇ Download what's missing</button>
+          <span class="hint" id="wzToolsMsg"></span></div>
+      </section>
+
+      <section class="wz hidden" data-step="done">
+        <p class="lead">You're all set, Morty!</p>
+        <ul class="wz-list" id="wzSummary"></ul>
+        <label class="check"><input type="checkbox" id="wzAssoc" checked> Open magnet links and .torrent files with RickWire</label>
+        <p class="hint">Tips: paste links into the box on the Queue tab, or drop .torrent files anywhere in the window.
+          Use <b>📱 Pair phone</b> to send links from your phone. Closing the window keeps RickWire running in the tray
+          (click <b>^</b> next to the clock).</p>
+      </section>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" id="wzSkip">Skip setup</button>
+      <div class="spacer"></div>
+      <button class="btn" id="wzBack">← Back</button>
+      <button class="btn go" id="wzNext">Next →</button>
+    </div>
+  </dialog>
+
+  <!-- settings -->
+  <dialog id="setDlg" class="wide">
+    <div class="dlg-head"><h2>⚙ Rick's Garage</h2><button class="btn icon" data-close>✕</button></div>
+    <div class="dlg-body" id="setBody">
+      <div class="section">
+        <h3>Debrid providers</h3>
+        <div class="hint">Keys are stored in <span class="kr">Windows Credential Manager</span>, never in files, never sent to your phone, and can't be read back — only replaced.</div>
+        <div id="provList" class="section"></div>
+        <div class="row"><span>When several are set up</span>
+          <select id="s_ask"><option value="1">Ask me every time</option><option value="0">Use the default, don't ask</option></select></div>
+        <div class="row"><span>Default provider</span><select id="s_default"></select></div>
+        <div class="row"><span>MEGA &amp; hoster links</span>
+          <select id="s_hoster"><option value="debrid_first">Through debrid first (no MEGA quota)</option><option value="native_first">Native first</option></select></div>
+        <label class="check"><input type="checkbox" id="s_cleanup"> Delete torrent from debrid after it's downloaded</label>
+        <label class="check"><input type="checkbox" id="s_pick"> Let me pick which files to download when a torrent has several (season packs, extras)</label>
+      </div>
+
+      <div class="section">
+        <h3>Downloads</h3>
+        <div class="row"><span>Folder</span><div class="inline"><input type="text" id="s_dir"><button class="btn" id="pickDir">Browse</button></div></div>
+        <div class="row"><span>Simultaneous downloads</span><input type="number" id="s_conc" min="1" max="10"></div>
+        <div class="row"><span>Automatic retries</span><input type="number" id="s_retry" min="0" max="10"
+          title="For network drops, busy servers and expired links. 0 = off"></div>
+        <div class="row"><span>yt-dlp format</span><input type="text" id="s_fmt"></div>
+        <div class="row"><span>Audio-only format</span>
+          <select id="s_afmt"><option>mp3</option><option>m4a</option><option>opus</option><option>flac</option><option>wav</option></select></div>
+        <label class="check"><input type="checkbox" id="s_subs"> Subtitles for YouTube and other video sites (embedded in the video)</label>
+        <div class="row"><span>Subtitle languages</span><input type="text" id="s_sublangs" placeholder="en.*"
+          title="Comma-separated, e.g. en, es. en.* means every English variant (en, en-US, en-GB...)"></div>
+        <label class="check"><input type="checkbox" id="s_autosubs"> Use auto-generated captions when there are no real ones</label>
+        <div class="row"><span>ffmpeg path</span><input type="text" id="s_ffmpeg" placeholder="auto (RickWire's own copy, then PATH)"></div>
+        <div class="hint" id="toolInfo"></div>
+      </div>
+
+      <div class="section">
+        <h3>Media tools</h3>
+        <div class="hint">yt-dlp, ffmpeg and Deno handle YouTube, Tubi, archive.org, .mpd/.m3u8 and other media links.
+          RickWire downloads them from each project's official GitHub releases and checks every file's SHA-256 before using it.</div>
+        <div class="tools" id="toolList"></div>
+        <div class="inline">
+          <button class="btn" id="toolCheck">⟳ Check for updates</button>
+          <button class="btn go hidden" id="toolRestart">↻ Restart RickWire to use the new yt-dlp</button>
+          <span class="hint" id="toolChecked"></span>
+        </div>
+        <label class="check"><input type="checkbox" id="s_autoyt"> Keep yt-dlp updated automatically (sites change often and break old versions)</label>
+        <label class="check"><input type="checkbox" id="s_toolchk"> Check for ffmpeg / Deno updates once a day and let me know</label>
+      </div>
+
+      <div class="section">
+        <h3>Magnet &amp; .torrent handler</h3>
+        <div class="hint" id="assocInfo"></div>
+        <div class="inline">
+          <button class="btn go" id="assocOn">Register RickWire</button>
+          <button class="btn" id="assocOff">Unregister</button>
+          <button class="btn" id="defApps">Windows Default apps…</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Phone / LAN access</h3>
+        <label class="check"><input type="checkbox" id="s_lan"> Allow devices on my home network (paired phones only)</label>
+        <label class="check"><input type="checkbox" id="s_https"> Use HTTPS with RickWire's local certificate (needed to install the PWA)</label>
+        <div class="row"><span>LAN port</span><input type="number" id="s_lanport" min="1024" max="65535"></div>
+        <div class="row"><span>Extra allowed networks</span><input type="text" id="s_cidrs" placeholder="e.g. 100.64.0.0/10 (Tailscale) — private ranges are always allowed"></div>
+        <div class="hint" id="lanInfo"></div>
+        <div class="devices" id="devList"></div>
+      </div>
+
+      <div class="section">
+        <h3>Remote access (outside your home)</h3>
+        <div class="hint">Lets you use the phone/web side of RickWire from anywhere, through a reverse proxy such as
+          <b>Nginx Proxy Manager</b> with a real HTTPS certificate. Visitors from outside must sign in with the web login
+          below; they get the same access as a paired phone (downloads, search, Latest), never your keys or settings.
+          Setup steps are in the README (<i>Remote access</i>). Safer alternative: Tailscale (add 100.64.0.0/10 above).</div>
+
+        <div class="sub">
+          <b>Web login</b> <span class="hint" id="loginState"></span>
+          <div class="row"><span>Username</span><input type="text" id="w_user" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
+          <div class="row"><span>Password</span><input type="password" id="w_pass" autocomplete="new-password" placeholder="at least 10 characters"></div>
+          <div class="row"><span>Repeat password</span><input type="password" id="w_pass2" autocomplete="new-password"></div>
+          <div class="inline"><button class="btn go" id="w_save">Save login</button>
+            <button class="btn danger hidden" id="w_remove">Remove login</button></div>
+          <div class="hint">Also works at home as an alternative to pairing. Changing the password signs everyone out.</div>
+        </div>
+
+        <div class="sub" id="totpBox">
+          <b>Two-factor (2FA)</b> <span class="hint" id="totpState"></span>
+          <div class="inline"><button class="btn" id="totpStart">Set up 2FA</button>
+            <button class="btn danger hidden" id="totpOff">Turn off 2FA</button></div>
+          <div id="totpSetup" class="hidden totp-setup">
+            <img id="totpQr" alt="2FA QR code">
+            <div style="display:grid;gap:8px">
+              <div class="hint">Scan with an authenticator app (Google Authenticator, Aegis, 1Password, Bitwarden…) or type this key:</div>
+              <code id="totpSecret"></code>
+              <div class="inline"><input type="text" id="totpCode" inputmode="numeric" maxlength="7" placeholder="6-digit code" style="width:140px">
+                <button class="btn go" id="totpConfirm">Confirm</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sub">
+          <b>Reverse proxy</b>
+          <label class="check"><input type="checkbox" id="s_remote"> Allow access from outside my home network (through the proxy below)</label>
+          <div class="row"><span>Proxy's address</span><input type="text" id="s_proxies" placeholder="IP of the PC running Nginx Proxy Manager, e.g. 192.168.1.20"></div>
+          <div class="row"><span>Public address</span><input type="text" id="s_hosts" placeholder="e.g. rickwire.example.com"></div>
+          <div class="hint" id="npmInfo"></div>
+        </div>
+
+        <div class="sub">
+          <b>Signed-in browsers</b>
+          <div class="devices" id="sessList"></div>
+          <div><button class="btn danger" id="sessAll">Sign out everywhere</button></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Search &amp; Latest sources</h3>
+        <div class="hint">These sites change domains often — update them here if one stops working.</div>
+        <div class="row"><span>Torrent search (BT4G)</span><input type="text" id="s_search"></div>
+        <div class="row"><span>YTS API</span><input type="text" id="s_yts"></div>
+        <div class="row"><span>EZTV API</span><input type="text" id="s_eztv"></div>
+      </div>
+
+      <div class="section">
+        <h3>Window</h3>
+        <label class="check"><input type="checkbox" id="s_tray"> Closing the window keeps RickWire running in the tray</label>
+        <label class="check"><input type="checkbox" id="s_min"> Start minimized to tray</label>
+        <label class="check"><input type="checkbox" id="s_spin"> Spin the portal logo (untick for a still logo, on phones too)</label>
+        <div><button class="btn" id="rerunSetup">🌀 Run first-time setup again</button></div>
+      </div>
+    </div>
+    <div class="dlg-foot"><span class="hint" id="setMsg"></span><div class="spacer"></div><button class="btn" data-close>Close</button><button class="btn go" id="saveSet">Save</button></div>
+  </dialog>
+
+  <div class="toasts" id="toasts"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

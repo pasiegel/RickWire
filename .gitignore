@@ -1,0 +1,24 @@
+# environments / build output
+.venv/
+venv/
+build/
+dist/
+*.spec
+*.spec.bak
+__pycache__/
+*.pyc
+
+# downloaded ffmpeg / Deno / yt-dlp (build.ps1 and the app fetch these)
+tools/
+
+# local data - settings, queue, certificates (never commit)
+data/
+*.sqlite3
+*.log
+PORTABLE.txt
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
