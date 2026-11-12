@@ -2,7 +2,8 @@
 
 * yt-dlp - the official pure-Python release zip. It's loaded in place of the bundled copy, so yt-dlp can be
   updated without rebuilding RickWire (sites change, yt-dlp breaks, a new release fixes it).
-* ffmpeg - BtbN's stable release builds (merges video + audio, converts audio).
+* ffmpeg - BtbN's stable release builds (merges video + audio, converts audio). BtbN has no macOS builds, so the
+  Mac uses eugeneware/ffmpeg-static (static ffmpeg + ffprobe, one gzipped file each) - or Homebrew's, if installed.
 * Deno - the JavaScript runtime yt-dlp needs for YouTube.
 
 Everything comes from each project's official GitHub releases over HTTPS. Only GitHub hosts are allowed, and
@@ -23,6 +24,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import gzip
 import tarfile
 import tempfile
 import time
@@ -31,7 +33,7 @@ from pathlib import Path
 
 import httpx
 
-from .config import BUNDLED_TOOLS_DIR, EXE, IS_WIN, TOOLS_DIR
+from .config import BUNDLED_TOOLS_DIR, EXE, IS_MAC, IS_WIN, TOOLS_DIR
 
 log = logging.getLogger("rickwire.tools")
 
@@ -45,16 +47,22 @@ ARM = platform.machine().lower() in ("aarch64", "arm64")
 if IS_WIN:
     FFMPEG_ASSET = r"ffmpeg-n(\d+)\.(\d+)-latest-win64-gpl-\d+\.\d+\.zip"
     DENO_ASSET = "deno-x86_64-pc-windows-msvc.zip"
+elif IS_MAC:
+    FFMPEG_ASSET = f"ffmpeg-darwin-{'arm64' if ARM else 'x64'}.gz"   # + the matching ffprobe-darwin-*.gz
+    DENO_ASSET = f"deno-{'aarch64' if ARM else 'x86_64'}-apple-darwin.zip"
 else:
     FFMPEG_ASSET = r"ffmpeg-n(\d+)\.(\d+)-latest-linux%s-gpl-\d+\.\d+\.tar\.xz" % ("arm64" if ARM else "64")
     DENO_ASSET = f"deno-{'aarch64' if ARM else 'x86_64'}-unknown-linux-gnu.zip"
 # Windows and Linux binaries can share one tools folder (portable copy on a network share)
-MANIFEST = "tools.json" if IS_WIN else "tools-linux.json"
+MANIFEST = "tools.json" if IS_WIN else "tools-mac.json" if IS_MAC else "tools-linux.json"
+# Apps started from Finder/Dock don't get the shell's PATH, so Homebrew's folders are added by hand
+EXTRA_PATH = "/opt/homebrew/bin:/usr/local/bin" if IS_MAC else ""
 
 TOOLS: dict[str, dict] = {
     "yt-dlp": {"label": "yt-dlp", "repo": "yt-dlp/yt-dlp", "size": "3 MB",
                "what": "Downloads from YouTube, Tubi, archive.org, .mpd/.m3u8 and 1000+ sites"},
-    "ffmpeg": {"label": "ffmpeg", "repo": "BtbN/FFmpeg-Builds", "size": "190 MB",
+    "ffmpeg": {"label": "ffmpeg", "repo": "eugeneware/ffmpeg-static" if IS_MAC else "BtbN/FFmpeg-Builds",
+               "size": "40 MB" if IS_MAC else "190 MB",
                "what": "Merges separate video + audio, converts to MP3/M4A"},
     "deno": {"label": "Deno", "repo": "denoland/deno", "size": "45 MB",
              "what": "JavaScript runtime that YouTube downloads need"},
@@ -125,7 +133,7 @@ def find_exe(name: str) -> tuple[Path | None, str]:
         p = d / f"{name}{EXE}"
         if p.exists():
             return p, "rickwire"
-    w = shutil.which(name)
+    w = shutil.which(name) or (shutil.which(name, path=EXTRA_PATH) if EXTRA_PATH else None)
     return (Path(w), "system") if w else (None, "")
 
 
@@ -166,6 +174,14 @@ def _members(archive: Path, wanted: tuple[str, ...]):
             base = m.name.rsplit("/", 1)[-1]
             if base in wanted and m.isfile():   # regular files only - no links/devices from the archive
                 yield base, t.extractfile(m)
+
+
+def _mac_prepare(exe: Path):
+    """Apple Silicon only runs signed code: give a downloaded binary an ad-hoc signature if it has none, and drop the
+    quarantine flag (httpx downloads normally don't get one)."""
+    subprocess.run(["xattr", "-d", "com.apple.quarantine", str(exe)], capture_output=True)
+    if subprocess.run(["codesign", "-v", str(exe)], capture_output=True).returncode != 0:
+        subprocess.run(["codesign", "--force", "-s", "-", str(exe)], capture_output=True)
 
 
 # ---------------------------------------------------------------------------------------------- manager
@@ -252,6 +268,12 @@ class ToolManager:
             asset, version = assets.get("yt-dlp"), rel["tag_name"]
         elif name == "deno":
             asset, version = assets.get(DENO_ASSET), rel["tag_name"].lstrip("v")
+        elif IS_MAC:   # eugeneware/ffmpeg-static: tag b6.1.1, separate ffmpeg-darwin-arm64.gz + ffprobe-darwin-arm64.gz
+            asset, version = assets.get(FFMPEG_ASSET), rel["tag_name"].lstrip("bv")
+            probe_asset = assets.get(FFMPEG_ASSET.replace("ffmpeg-", "ffprobe-", 1))
+            if asset and probe_asset:
+                return {"version": version, "asset": asset, "assets": assets, "extra": [probe_asset]}
+            asset = None
         else:   # newest stable release build, e.g. ffmpeg-n9.0-latest-win64-gpl-9.0.zip
             best = None
             for n, a in assets.items():
@@ -277,8 +299,8 @@ class ToolManager:
         return self.status()
 
     # ------------------------------------------------------------------ install / update
-    async def _expected_sha(self, rel: dict) -> str:
-        asset = rel["asset"]
+    async def _expected_sha(self, rel: dict, asset: dict | None = None) -> str:
+        asset = asset or rel["asset"]
         digest = asset.get("digest") or ""
         if digest.startswith("sha256:"):
             return digest.split(":", 1)[1].lower()
@@ -303,25 +325,34 @@ class ToolManager:
         async with lock:
             job = self.progress[name] = {"state": "downloading", "done": 0, "total": 0, "error": None}
             tmp = self.dest / f".{name}.download"
+            tmps = [tmp]
             try:
                 rel = self.releases.get(name) or await self._latest(name)
                 self.releases[name] = rel
-                sha = await self._expected_sha(rel)
-                job["total"] = rel["asset"]["size"]
-                h = hashlib.sha256()
-                async with self.client.stream("GET", rel["asset"]["browser_download_url"]) as r:
-                    if r.status_code != 200:
-                        raise ToolError(f"Download failed (HTTP {r.status_code})")
-                    with open(tmp, "wb") as fh:
-                        async for chunk in r.aiter_bytes(1 << 16):
-                            fh.write(chunk)
-                            h.update(chunk)
-                            job["done"] += len(chunk)
-                job["state"] = "verifying"
-                if h.hexdigest() != sha:
-                    raise ToolError("Checksum mismatch - the download was damaged or tampered with, so it was thrown away")
+                assets = [rel["asset"]] + rel.get("extra", [])   # Mac ffmpeg: ffmpeg + ffprobe are two files
+                job["total"] = sum(a["size"] for a in assets)
+                archives, sha = [], ""
+                for i, asset in enumerate(assets):
+                    path = tmp if i == 0 else tmp.with_name(f"{tmp.name}{i}")
+                    tmps.append(path)
+                    job["state"] = "downloading"
+                    expected = await self._expected_sha(rel, asset)
+                    h = hashlib.sha256()
+                    async with self.client.stream("GET", asset["browser_download_url"]) as r:
+                        if r.status_code != 200:
+                            raise ToolError(f"Download failed (HTTP {r.status_code})")
+                        with open(path, "wb") as fh:
+                            async for chunk in r.aiter_bytes(1 << 16):
+                                fh.write(chunk)
+                                h.update(chunk)
+                                job["done"] += len(chunk)
+                    job["state"] = "verifying"
+                    if h.hexdigest() != expected:
+                        raise ToolError("Checksum mismatch - the download was damaged or tampered with, so it was thrown away")
+                    archives.append((asset["name"], path))
+                    sha = sha or expected
                 job["state"] = "installing"
-                version = await asyncio.to_thread(self._unpack, name, tmp, rel["version"])
+                version = await asyncio.to_thread(self._unpack, name, tmp, rel["version"], archives)
                 man = read_manifest(self.dest)
                 man[name] = {"version": version, "sha256": sha, "installed": int(time.time()),
                              "from": rel["asset"]["browser_download_url"]}
@@ -333,13 +364,14 @@ class ToolManager:
                 log.warning("installing %s failed: %s", name, e)
                 raise ToolError(job["error"]) from None
             finally:
-                try:
-                    tmp.unlink()
-                except OSError:
-                    pass
+                for path in tmps:
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
         return self.status()
 
-    def _unpack(self, name: str, archive: Path, version: str) -> str:
+    def _unpack(self, name: str, archive: Path, version: str, archives: list | None = None) -> str:
         if name == "yt-dlp":
             got = pyz_version(archive)
             if not got:
@@ -352,12 +384,20 @@ class ToolManager:
         wanted = {"ffmpeg": (f"ffmpeg{EXE}", f"ffprobe{EXE}"), "deno": (f"deno{EXE}",)}[name]
         with tempfile.TemporaryDirectory(dir=self.dest) as td:
             staged = {}
-            for base, src in _members(archive, wanted):
+            if archives and archives[0][0].endswith(".gz") and not archives[0][0].endswith(".tar.gz"):
+                members = ((n.split("-", 1)[0], gzip.open(p)) for n, p in archives)   # ffmpeg-darwin-arm64.gz -> ffmpeg
+            else:
+                members = _members(archive, wanted)
+            for base, src in members:
+                if base not in wanted:
+                    continue
                 out = Path(td) / base
                 with src as fh_in, open(out, "wb") as fh:
                     shutil.copyfileobj(fh_in, fh, 1 << 20)
                 if not IS_WIN:
                     out.chmod(out.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                if IS_MAC:
+                    _mac_prepare(out)
                 staged[base] = out
             missing = [w for w in wanted if w not in staged]
             if missing:

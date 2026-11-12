@@ -1,4 +1,5 @@
-"""API-key storage in the OS credential store (Windows Credential Manager / DPAPI).
+"""API-key storage in the OS credential store (Windows Credential Manager / DPAPI, the macOS Keychain, or the
+Secret Service keyring on Linux).
 
 Keys are write-only from the HTTP API: they are never returned to any client,
 only a masked hint. A logging filter scrubs them from every log record.
@@ -25,6 +26,10 @@ def _pick_backend() -> str | None:
         from keyring.backends.Windows import WinVaultKeyring
         keyring.set_keyring(WinVaultKeyring())
         return "Windows Credential Manager"
+    if sys.platform == "darwin":
+        from keyring.backends.macOS import Keyring as MacKeyring   # the user's login Keychain
+        keyring.set_keyring(MacKeyring())
+        return "the macOS Keychain"
     candidates = []
     try:
         from keyring.backends.SecretService import Keyring as SecretServiceKeyring   # GNOME Keyring, KeePassXC...

@@ -4,7 +4,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, mac-port]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -111,11 +111,8 @@ jobs:
           if-no-files-found: error
 
   macos:
-    # Off until the Mac port lands: then add the repository variable BUILD_MAC = true.
-    # packaging/mac/build_mac.sh must leave the .dmg in dist/.
-    name: macOS (.dmg)
-    if: vars.BUILD_MAC == 'true'
-    runs-on: macos-latest
+    name: macOS (.dmg, Apple Silicon)
+    runs-on: macos-latest   # arm64
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -125,9 +122,43 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Build
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash packaging/mac/build_mac.sh
+
+      - name: Security tests
+        run: |
+          .venv-mac/bin/python tests/audit_provider_security.py
+          .venv-mac/bin/python tests/dev/t_remote.py
+          .venv-mac/bin/python tests/dev/t_phoneurl.py
+
+      - name: Keychain (save, read back, delete a dummy key)
+        run: |
+          .venv-mac/bin/python -c "
+          from rickwire import vault
+          assert vault.BACKEND == 'the macOS Keychain', vault.BACKEND
+          vault.put('ci_dummy', 'not-a-real-key-1234')
+          assert vault.get('ci_dummy') == 'not-a-real-key-1234'
+          vault.delete('ci_dummy')
+          assert vault.get('ci_dummy') is None
+          print('keychain OK')"
+
+      - name: ffmpeg + Deno downloads (checksums, Apple Silicon signing)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # only for the release lookups (shared runner IPs hit rate limits)
+        run: |
+          .venv-mac/bin/python -m rickwire.tools install ffmpeg deno --dest "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/ffmpeg" -version | head -1
+          "$RUNNER_TEMP/tools/ffprobe" -version | head -1
+          "$RUNNER_TEMP/tools/deno" --version | head -1
+
+      - name: Smoke test the app (start, window, menu bar, magnet + .torrent via Apple Events, quit)
+        run: .venv-mac/bin/python tests/check_mac_app.py dist/RickWire.app --shot dist/mac-screenshot.png
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-test
+          path: dist/mac-screenshot.png
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v4
         with:
@@ -159,4 +190,8 @@ jobs:
         with:
           name: RickWire ${{ github.ref_name }}
           generate_release_notes: true
-          files: dist/*
+          files: |
+            dist/*.exe
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.dmg

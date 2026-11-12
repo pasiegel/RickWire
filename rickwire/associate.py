@@ -2,6 +2,7 @@
 
 * Windows: HKCU\\Software\\Classes + RegisteredApplications (so it shows in "Default apps").
 * Linux: ~/.local/share/applications/rickwire.desktop (also the app-menu entry) + `xdg-mime default`.
+* macOS: the app's Info.plist declares both; LaunchServices makes RickWire the default (see macos.py).
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from pathlib import Path
 PROG_ID = "RickWire.Torrent"
 ROOT = Path(__file__).resolve().parent.parent
 IS_WIN = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
 DESKTOP_ID = "rickwire.desktop"
 MIME_TYPES = ("x-scheme-handler/magnet", "application/x-bittorrent")
 
@@ -52,14 +54,23 @@ def icon_path() -> str:
 
 
 def register() -> None:
+    if IS_MAC:
+        from . import macos
+        return macos.register()
     _win_register() if IS_WIN else _linux_register()
 
 
 def unregister() -> None:
+    if IS_MAC:
+        from . import macos
+        return macos.unregister()
     _win_unregister() if IS_WIN else _linux_unregister()
 
 
 def status() -> dict:
+    if IS_MAC:
+        from . import macos
+        return macos.status()
     return _win_status() if IS_WIN else _linux_status()
 
 

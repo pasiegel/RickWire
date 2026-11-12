@@ -82,9 +82,14 @@ async function boot() {
       location.replace("/pair.html");
     };
   }
-  if (me.platform && me.platform !== "win32") {   // Linux desktop: different keyring, no "Default apps" page
-    $$(".kr").forEach((e) => (e.textContent = "your system keyring (GNOME Keyring / KWallet)"));
+  if (me.platform && me.platform !== "win32") {   // Linux / Mac desktop: different keyring, no "Default apps" page
+    const mac = me.platform === "darwin";
+    $$(".kr").forEach((e) => (e.textContent = mac ? "your Mac's Keychain" : "your system keyring (GNOME Keyring / KWallet)"));
     $("#defApps").classList.add("hidden");
+    if (mac) {
+      $$(".trayname").forEach((e) => (e.textContent = "menu bar"));
+      $$(".trayhint").forEach((e) => (e.textContent = "in the menu bar (the portal icon at the top of the screen)"));
+    }
   }
   if ("serviceWorker" in navigator && window.isSecureContext && !me.admin) navigator.serviceWorker.register("/sw.js").catch(() => {});
   await loadProviders();
@@ -198,7 +203,7 @@ function makeCard(id) {
         <button class="btn icon" data-a="resume" title="Resume">▶</button>
         <button class="btn icon" data-a="retry" title="Retry">↻</button>
         <button class="btn icon" data-a="sort" title="Rename &amp; sort into Movies / TV folders">🏷</button>
-        <button class="btn icon" data-a="open" title="Show in folder">📂</button>
+        <button class="btn icon" data-a="open" title="${me && me.platform === "darwin" ? "Show in Finder" : "Show in folder"}">📂</button>
         <button class="btn icon" data-a="files" title="Files">☰</button>
         <button class="btn icon danger" data-a="remove" title="Remove">✕</button>
       </div>
@@ -640,7 +645,9 @@ function renderAssoc(a) {
   const win = !me.platform || me.platform === "win32";
   $("#assocInfo").textContent = parts.join(" · ") + (win
     ? ". If another app still grabs them, pick RickWire in Windows Default apps."
-    : ". Registering also adds RickWire to your applications menu.");
+    : me.platform === "darwin"
+      ? ". If another app still grabs .torrent files: Finder › a .torrent file › Get Info › Open with › RickWire › Change All."
+      : ". Registering also adds RickWire to your applications menu.");
 }
 function renderDevices(devs) {
   const box = $("#devList");

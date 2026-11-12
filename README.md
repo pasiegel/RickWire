@@ -48,13 +48,14 @@ often, so you can edit the source URLs in Settings › *Search & Latest sources*
 
 ## Install
 
-Three packages, all built by `.\build.ps1`:
+Four packages. `.\build.ps1` builds the first three on Windows; the Mac one is built on a Mac (or by GitHub Actions):
 
 | | File | Notes |
 |---|---|---|
 | **Installer** | `dist\RickWire-Setup-<version>.exe` (34 MB) | Per-user install, no admin prompt. Adds a Start menu entry, and optionally a desktop shortcut, the magnet/.torrent handler and start-with-Windows. Uninstall from *Settings › Apps*. Data lives in `%APPDATA%\RickWire`. |
 | **Portable** | `dist\RickWire\` or `dist\RickWire-portable.zip` (201 MB) | Copy anywhere and run `RickWire.exe`. Includes ffmpeg + Deno, so it works offline. Each PC keeps its own data in `data\<PC-NAME>\`, so you can copy it around or run it from a network share. |
 | **Linux** | `dist\RickWire-linux-portable.tar.gz` (1 MB) | Unpack and run `./run.sh`. The first run sets up its own Python environment (needs Python 3.10+ and internet once). `./run.sh --install` adds a menu entry and the magnet/.torrent handler. See [LINUX.md](packaging/linux/LINUX.md). |
+| **macOS** | `dist/RickWire-<version>-mac-arm64.dmg` | Apple Silicon (M1 and newer), macOS 12+. Drag RickWire into Applications. See [macOS](#macos) below. |
 
 ```powershell
 .\build.ps1                # installer + portable folder + zip + Linux tarball
@@ -81,6 +82,31 @@ Notes for both:
   network share) fails to start with a .NET "Failed to resolve Python.Runtime…" / "Could not load file" error.
 - Windows may show a SmartScreen "Windows protected your PC" box the first time (the exe isn't code-signed).
   Click *More info › Run anyway*.
+
+### macOS
+
+1. Open the `.dmg` and drag **RickWire** into **Applications**.
+2. **The first time, right-click RickWire › Open, then Open again.** The app isn't notarized by Apple (that needs a
+   paid developer account), so a plain double-click says it "can't be opened". If macOS still refuses:
+   *System Settings › Privacy & Security* › scroll down › **Open Anyway**. After that it opens normally.
+3. RickWire lives in the **menu bar** (the portal icon) and the Dock. Closing the window keeps it running; quit
+   from the menu-bar icon or with ⌘Q.
+4. When you first pair a phone, macOS asks whether RickWire may **accept incoming network connections**: click
+   *Allow*, or phones can't reach it.
+
+- API keys go in your Mac's **Keychain**. After an upgrade macOS may ask once whether RickWire may use them
+  (*Always Allow*), because each build has a new ad-hoc signature.
+- Settings, queue and certificates: `~/Library/Application Support/RickWire`. Media tools go in its `tools` folder.
+- **ffmpeg:** RickWire uses Homebrew's (`brew install ffmpeg`) if you have it, otherwise *Settings › Media tools*
+  downloads a static build from [eugeneware/ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) (checked
+  against GitHub's SHA-256, like everything else).
+- magnet: links and .torrent files: tick the option in first-run setup or *Settings*. If another app still grabs
+  .torrent files: select one in Finder › *Get Info* › *Open with* › RickWire › **Change All**.
+- **iPhone, home address:** the LAN address uses RickWire's own certificate. On the iPhone, open
+  `https://<the-pair-address>/rickwire-ca.crt` in Safari (the *Pair phone* dialog links it), then
+  *Settings › General › VPN & Device Management* › install it, and *Settings › General › About › Certificate Trust
+  Settings* › turn on full trust. Remote access through your proxy doesn't need this.
+- Building it yourself: `bash packaging/mac/build_mac.sh` on a Mac with Python 3.12+.
 
 ## Media tools (yt-dlp, ffmpeg, Deno)
 
@@ -137,16 +163,17 @@ still automatically when your system asks for reduced motion).
 
 | When | What happens |
 |---|---|
-| Push or pull request | Security tests (provider key audit, login/proxy, phone address), then the Windows installer, the Windows portable zip and the Linux package. Download them from the run's **Artifacts** box. |
-| Push a tag like `v0.2.7` | Same, then a GitHub **Release** with the three files attached. The tag has to match `__version__` in `rickwire/__init__.py`. |
+| Push or pull request | Security tests (provider key audit, login/proxy, phone address), then the Windows installer, the Windows portable zip, the Linux package and the Mac `.dmg`. Download them from the run's **Artifacts** box. |
+| Push a tag like `v0.2.8` | Same, then a GitHub **Release** with the four files attached. The tag has to match `__version__` in `rickwire/__init__.py`. |
 | *Actions › Build › Run workflow* | A manual build. |
 
 - The Windows job downloads ffmpeg and Deno into the portable zip, using the workflow's own `GITHUB_TOKEN` to
   avoid GitHub's rate limit. No secrets need setting up.
 - The Linux job also unpacks the package on Ubuntu, installs its requirements and imports the app, as a smoke test.
-- **macOS:** the job is in the workflow but switched off. Once the Mac port, with its `packaging/mac/build_mac.sh`,
-  is in the repo, add a repository variable `BUILD_MAC` = `true` (*Settings › Secrets and variables › Actions ›
-  Variables*). The script should leave a `.dmg` in `dist/`.
+- **macOS** (Apple Silicon runner): `packaging/mac/build_mac.sh` builds the `.app` and `.dmg`, then the job tests
+  the Keychain, the ffmpeg/Deno downloads, and the app itself (`tests/check_mac_app.py`: it starts, shows its window
+  and menu-bar icon, takes magnet links and .torrent files the way Finder sends them, and quits). A screenshot of
+  the test run is in the `macos-test` artifact.
 - Publishing: `repo\` is a clean copy for GitHub, without builds, downloads or local data. From the project folder:
   ```powershell
   powershell -ExecutionPolicy Bypass -File publish.ps1 -RemoteUrl https://github.com/<you>/RickWire.git  # first time
@@ -262,7 +289,8 @@ torrent went.
 
 ## Where things live
 
-- Settings, job DB, TLS certs, log: `%APPDATA%\RickWire\` (installed / source) or `data\<PC-NAME>\` (portable)
+- Settings, job DB, TLS certs, log: `%APPDATA%\RickWire\` (installed / source), `data\<PC-NAME>\` (portable),
+  `~/Library/Application Support/RickWire` (Mac)
 - Media tools: `tools\` in the app folder
 - Downloads: `~\Downloads\RickWire` (change it in Settings)
 - Docs: this README, [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) (beginner guide with screenshots; also

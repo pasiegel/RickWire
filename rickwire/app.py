@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, associate, vault
-from .config import DEFAULT_DOWNLOAD_DIR, FROZEN, IS_WIN, PORTABLE, PUBLIC_SETTING_KEYS, WEB_DIR, Settings
+from .config import DEFAULT_DOWNLOAD_DIR, FROZEN, IS_MAC, IS_WIN, PORTABLE, PUBLIC_SETTING_KEYS, WEB_DIR, Settings
 from .discover import Discover, DiscoverError
 from .manager import JobManager
 from .providers import ALL as PROVIDERS, ProviderError
@@ -138,13 +138,17 @@ def _win_select(target: Path) -> bool:
 
 
 def open_in_file_manager(target: Path) -> None:
-    """Show a file (selected) or folder in Explorer / the Linux file manager."""
+    """Show a file (selected) or folder in Explorer / Finder / the Linux file manager."""
     if IS_WIN:
         # `explorer /select,<path>` re-parses its command line itself: a comma in the file name ends the path
         # and Explorer falls back to Documents. The shell API takes the path as data, so any name works.
         if target.is_file() and _win_select(target):
             return
         os.startfile(target.parent if target.is_file() else target)
+        return
+    if IS_MAC:
+        from .macos import reveal
+        reveal(target)
         return
     folder = target.parent if target.is_file() else target
     if target.is_file():
@@ -609,7 +613,12 @@ def create_app(settings: Settings, manager: JobManager, auth: Auth, hooks: Hooks
     @app.post("/api/system/associate")
     async def do_associate(request: Request, on: bool = True):
         require(request, admin=True)
-        associate.register() if on else associate.unregister()
+        try:
+            associate.register() if on else associate.unregister()
+        except Exception as e:
+            if e.__class__.__name__ != "NotTheApp":   # macOS, run from source: there's no app bundle to register
+                raise
+            raise HTTPException(400, str(e))
         return associate.status()
 
     @app.post("/api/system/default-apps")

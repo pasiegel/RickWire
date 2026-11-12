@@ -12,11 +12,12 @@ from . import APP_NAME
 
 FROZEN = getattr(sys, "frozen", False)
 IS_WIN = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
 EXE = ".exe" if IS_WIN else ""
-# Folder holding RickWire.exe (portable build) or the project root (source checkout / Linux portable).
+# Folder holding RickWire.exe (portable build), RickWire.app/Contents/MacOS, or the project root (source / Linux portable).
 APP_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 # The portable zip / tarball ships a PORTABLE.txt beside the exe or run.sh; the installed copy doesn't.
-PORTABLE = (APP_DIR / "PORTABLE.txt").exists()
+PORTABLE = (APP_DIR / "PORTABLE.txt").exists() and not (IS_MAC and FROZEN)   # no portable mode for the Mac app
 BUNDLED_TOOLS_DIR = APP_DIR / "tools"   # ffmpeg / deno shipped with (or downloaded into) the app folder
 
 
@@ -44,12 +45,15 @@ def _data_dir() -> Path:
 def _user_dir(win_var: str, xdg_var: str, xdg_default: str) -> Path:
     if IS_WIN:
         return Path(os.environ.get(win_var, Path.home())) / APP_NAME
+    if IS_MAC:
+        return Path.home() / "Library" / "Application Support" / APP_NAME
     return Path(os.environ.get(xdg_var) or Path.home() / xdg_default) / APP_NAME
 
 
 # Where downloaded/updated tools go: the app folder when we can write to it (portable, per-user install,
 # source checkout), otherwise %LOCALAPPDATA%/RickWire/tools or ~/.local/share/RickWire/tools.
-TOOLS_DIR = BUNDLED_TOOLS_DIR if _writable(BUNDLED_TOOLS_DIR) else (
+# The Mac app never writes into its own bundle (that would break its code signature): Application Support/RickWire/tools.
+TOOLS_DIR = BUNDLED_TOOLS_DIR if not (IS_MAC and FROZEN) and _writable(BUNDLED_TOOLS_DIR) else (
     _user_dir("LOCALAPPDATA", "XDG_DATA_HOME", ".local/share") / "tools")
 TOOLS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -92,7 +96,7 @@ DEFAULTS: dict = {
     "lan_port": 13701,             # LAN / phone PWA
     "lan_https": True,
     "allowed_cidrs": [],           # extra allowlist; private ranges are always allowed
-    "close_to_tray": IS_WIN,       # Linux: GNOME hides tray icons without an extension, so closing quits by default
+    "close_to_tray": IS_WIN or IS_MAC,   # Linux: GNOME hides tray icons without an extension, so closing quits by default
     "start_minimized": False,
     "onboarded": False,            # first-run setup finished or skipped
     "auto_update_ytdlp": True,     # yt-dlp breaks often when sites change - keep it current

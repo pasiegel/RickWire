@@ -1,5 +1,5 @@
-"""Desktop shell: single instance, pywebview window (Edge WebView2 on Windows, WebKitGTK or Qt on Linux),
-tray icon, magnet handoff."""
+"""Desktop shell: single instance, pywebview window (Edge WebView2 on Windows, WKWebView on macOS, WebKitGTK or Qt
+on Linux), tray / menu-bar icon, magnet handoff."""
 from __future__ import annotations
 
 import argparse
@@ -19,6 +19,7 @@ from .config import LOCAL_TOKEN_FILE, LOG_FILE, Settings
 
 log = logging.getLogger("rickwire")
 IS_WIN = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
 
 
 def setup_logging():
@@ -86,6 +87,8 @@ def bring_to_front(window) -> None:
     server included. Invoke() runs it on the window thread and lets go of the GIL while it waits."""
     window.show()
     window.restore()
+    if IS_MAC:
+        return   # pywebview's Cocoa show() already runs on the main thread and activates the app
     if not IS_WIN:
         window.on_top = True
         window.on_top = False
@@ -118,6 +121,12 @@ def make_tray(on_open, on_quit, gui: str | None = None):
         menu = pystray.Menu(pystray.MenuItem("Open RickWire", lambda: on_open(), default=True),
                             pystray.MenuItem("Quit", lambda: on_quit()))
         icon = pystray.Icon(APP_NAME, portal(64), "RickWire", menu)
+        if IS_MAC:
+            # AppKit: the menu-bar item lives on the main thread and pywebview's NSApp loop runs it. pystray's default
+            # setup would show the icon from a worker thread, so it's shown here instead (we are on the main thread).
+            icon.run_detached(setup=lambda _icon: None)
+            icon.visible = True
+            return icon, lambda: True
         if not IS_WIN and gui == "gtk":
             icon.run_detached()   # share pywebview's GTK main loop instead of starting a second one
             return icon, lambda: state["ok"]
@@ -190,17 +199,18 @@ def _main(argv: list[str] | None = None):
         return
     from .sources import ytdl
     log.info("backend listening; %s", ytdl.LOAD_NOTE)
-    if items:
-        for it in items:
+    def add_items(new: list[str]):
+        for it in new:
             if it.lower().endswith(".torrent") and os.path.isfile(it):
                 with open(it, "rb") as fh:
                     backend.submit(backend.manager.add("", torrent_bytes=fh.read(), torrent_filename=os.path.basename(it)))
             else:
                 backend.submit(backend.manager.add_text(it))
+    add_items(items)
 
     import webview
 
-    gui = None if IS_WIN else linux_gui()
+    gui = None if IS_WIN or IS_MAC else linux_gui()
     if gui:
         log.info("window toolkit: %s", gui)
     state = {"quitting": False}
@@ -230,7 +240,7 @@ def _main(argv: list[str] | None = None):
         state["quitting"] = True
         log.info("quitting")
         backend.stop()
-        if tray:
+        if tray and not IS_MAC:   # macOS: stopping pystray stops the shared NSApp loop; the process exits anyway
             tray.stop()
         # never leave a ghost process behind (it would block restarts and the installer)
         watchdog = threading.Timer(6, lambda: os._exit(0))
@@ -249,6 +259,10 @@ def _main(argv: list[str] | None = None):
         return True
 
     def notify(title: str, msg: str):
+        if IS_MAC:
+            from .macos import notify as mac_notify
+            mac_notify(title, msg)
+            return
         if tray is not None and getattr(tray, "HAS_NOTIFICATION", False):
             try:
                 tray.notify(msg, title)
@@ -290,7 +304,8 @@ def _main(argv: list[str] | None = None):
         # without a working tray icon there'd be no way back to a hidden window, so closing quits
         if settings["close_to_tray"] and tray is not None and tray_alive() and not state["quitting"]:
             window.hide()
-            notify("Still running", "RickWire is in the tray. Right-click the portal to quit.")
+            notify("Still running", "RickWire is in the menu bar. Click the portal there to quit." if IS_MAC else
+                   "RickWire is in the tray. Right-click the portal to quit.")
             return False
         return True
 
@@ -298,11 +313,18 @@ def _main(argv: list[str] | None = None):
         log.info("window shown")
         focus()   # the first-run firewall prompt steals focus; bring the window to the front
         if settings["close_to_tray"] and tray is not None:
-            notify("RickWire is running", "Closing the window keeps it in the tray"
-                   + (" (click ^ by the clock)." if IS_WIN else "."))
+            notify("RickWire is running", "Closing the window keeps it in the menu bar (the portal icon)." if IS_MAC
+                   else "Closing the window keeps it in the tray" + (" (click ^ by the clock)." if IS_WIN else "."))
 
     window.events.closing += on_closing
     window.events.shown += on_shown
+    if IS_MAC:
+        from .macos import install_app_hooks
+
+        def opened(new: list[str]):
+            add_items(new)
+            focus()
+        install_app_hooks(opened, focus, lambda: threading.Timer(0.1, quit_app).start())
     log.info("opening window")
     try:
         webview.start(private_mode=True, gui=gui)
@@ -311,7 +333,9 @@ def _main(argv: list[str] | None = None):
         if tray:
             tray.stop()
         backend.stop()
-        if IS_WIN:
+        if IS_MAC:
+            hint = "Make sure you're on macOS 12 or newer, then open RickWire again."
+        elif IS_WIN:
             hint = ("Make sure RickWire.exe.config sits next to RickWire.exe. If you unzipped a downloaded copy, "
                     "right-click the zip > Properties > Unblock and extract it again. The Microsoft Edge WebView2 "
                     "Runtime must also be installed (it comes with Windows 11).")
@@ -356,6 +380,8 @@ def _quit_running():
 def _app_mutex():
     """Lets the installer/uninstaller see that RickWire is running (Inno Setup AppMutex)."""
     global _mutex
+    if not IS_WIN:
+        return
     try:
         import ctypes
         _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "RickWireAppMutex")
@@ -398,6 +424,10 @@ def _fatal(msg: str):
             ctypes.windll.user32.MessageBoxW(0, msg, "RickWire", 0x10 | 0x10000 | 0x40000)  # error, foreground, topmost
         except Exception:
             pass
+        return
+    if IS_MAC:
+        from .macos import alert
+        alert(msg)
         return
     for cmd in (["zenity", "--error", "--title=RickWire", "--no-wrap", f"--text={msg}"],
                 ["kdialog", "--title", "RickWire", "--error", msg],

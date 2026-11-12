@@ -1,5 +1,6 @@
 # environments / build output
 .venv/
+.venv-mac/
 venv/
 build/
 dist/
