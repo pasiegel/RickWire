@@ -43,15 +43,17 @@ NO_WINDOW = 0x08000000 if IS_WIN else 0
 CHECK_TTL = 6 * 3600
 PYZ = "yt-dlp.pyz"
 ARM = platform.machine().lower() in ("aarch64", "arm64")
-# Release-asset names per platform. ffmpeg = BtbN's stable release builds (nX.Y), not nightly master.
+# Release-asset names per platform. ffmpeg = BtbN's stable release builds (nX.Y), not nightly master. BtbN used to
+# name them ffmpeg-n9.0-latest-win64-gpl-9.0.zip; since 2026-11 it's ffmpeg-n9.0.2-57-gd838f9f9ae-win64-gpl-9.0.zip.
+_BTBN = r"ffmpeg-n(\d+)\.(\d+)((?:\.\d+)?)-(?:latest|\d+-g[0-9a-f]+)-%s-gpl-\d+\.\d+\.%s"
 if IS_WIN:
-    FFMPEG_ASSET = r"ffmpeg-n(\d+)\.(\d+)-latest-win64-gpl-\d+\.\d+\.zip"
+    FFMPEG_ASSET = _BTBN % ("win64", "zip")
     DENO_ASSET = "deno-x86_64-pc-windows-msvc.zip"
 elif IS_MAC:
     FFMPEG_ASSET = f"ffmpeg-darwin-{'arm64' if ARM else 'x64'}.gz"   # + the matching ffprobe-darwin-*.gz
     DENO_ASSET = f"deno-{'aarch64' if ARM else 'x86_64'}-apple-darwin.zip"
 else:
-    FFMPEG_ASSET = r"ffmpeg-n(\d+)\.(\d+)-latest-linux%s-gpl-\d+\.\d+\.tar\.xz" % ("arm64" if ARM else "64")
+    FFMPEG_ASSET = _BTBN % ("linuxarm64" if ARM else "linux64", r"tar\.xz")
     DENO_ASSET = f"deno-{'aarch64' if ARM else 'x86_64'}-unknown-linux-gnu.zip"
 # Windows and Linux binaries can share one tools folder (portable copy on a network share)
 MANIFEST = "tools.json" if IS_WIN else "tools-mac.json" if IS_MAC else "tools-linux.json"
@@ -61,7 +63,7 @@ EXTRA_PATH = "/opt/homebrew/bin:/usr/local/bin" if IS_MAC else ""
 TOOLS: dict[str, dict] = {
     "yt-dlp": {"label": "yt-dlp", "repo": "yt-dlp/yt-dlp", "size": "3 MB",
                "what": "Downloads from YouTube, Tubi, archive.org, .mpd/.m3u8 and 1000+ sites"},
-    "ffmpeg": {"label": "ffmpeg", "repo": "eugeneware/ffmpeg-static" if IS_MAC else "BtbN/FFmpeg-Builds",
+    "ffmpeg": {"label": "ffmpeg", "repo": "eugeneware/ffmpeg-static" if IS_MAC else "FFmpeg-Builds/FFmpeg-Builds",   # BtbN's (moved 2026-11)
                "size": "40 MB" if IS_MAC else "190 MB",
                "what": "Merges separate video + audio, converts to MP3/M4A"},
     "deno": {"label": "Deno", "repo": "denoland/deno", "size": "45 MB",
@@ -278,8 +280,10 @@ class ToolManager:
             best = None
             for n, a in assets.items():
                 m = re.fullmatch(FFMPEG_ASSET, n)
-                if m and (best is None or vtuple(m.group(0)) > vtuple(best[0])):
-                    best = (f"{m.group(1)}.{m.group(2)}", a)
+                if m:
+                    ver = f"{m.group(1)}.{m.group(2)}{m.group(3)}"   # 9.0 or 9.0.2
+                    if best is None or vtuple(ver) > vtuple(best[0]):
+                        best = (ver, a)
             asset, version = (best[1], best[0]) if best else (None, None)
         if not asset:
             raise ToolError(f"No download for this system ({sys.platform}/{platform.machine()}) in the latest release")
