@@ -23,6 +23,7 @@ import hmac
 import ipaddress
 import secrets
 import socket
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -66,7 +67,21 @@ def is_loopback(request: Request) -> bool:
         return False
 
 
+_ips_cache: tuple[float, list[str]] = (0.0, [])
+
+
 def local_ips() -> list[str]:
+    """This PC's LAN addresses. Cached for a minute: resolving the computer's own name can be slow (macOS asks mDNS
+    and may wait 5+ seconds), and this is called on every desktop /api/me."""
+    global _ips_cache
+    if time.time() - _ips_cache[0] < 60:
+        return list(_ips_cache[1])
+    ips = _local_ips()
+    _ips_cache = (time.time(), ips)
+    return list(ips)
+
+
+def _local_ips() -> list[str]:
     ips = set()
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -76,6 +91,8 @@ def local_ips() -> list[str]:
     except OSError:
         pass
     try:
+        if sys.platform == "darwin":   # the UDP trick above already found the address; skip the slow name lookup
+            raise OSError
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ips.add(info[4][0])
     except OSError:

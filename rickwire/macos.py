@@ -58,7 +58,7 @@ def install_app_hooks(on_items, on_reopen, on_quit) -> None:
         objc.selector(application_openURLs_, selector=b"application:openURLs:", signature=b"v@:@@"),
         objc.selector(applicationShouldHandleReopen_hasVisibleWindows_,
                       selector=b"applicationShouldHandleReopen:hasVisibleWindows:", signature=b"Z@:@Z"),
-        objc.selector(applicationShouldTerminate_, selector=b"applicationShouldTerminate:", signature=b"Q@:@"),
+        objc.selector(applicationShouldTerminate_, selector=b"applicationShouldTerminate:", signature=b"I@:@"),
     ])
 
 

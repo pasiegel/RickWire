@@ -112,7 +112,7 @@ def bring_to_front(window) -> None:
 
 def make_tray(on_open, on_quit, gui: str | None = None):
     """-> (icon or None, alive()). The tray is optional on Linux (GNOME hides it without an extension)."""
-    if not IS_WIN and gui != "gtk":
+    if not IS_WIN and not IS_MAC and gui != "gtk":
         os.environ.setdefault("PYSTRAY_BACKEND", "xorg")   # no GTK: plain X11 tray (also works under XWayland)
     state = {"ok": True}
     try:
@@ -324,7 +324,10 @@ def _main(argv: list[str] | None = None):
         def opened(new: list[str]):
             add_items(new)
             focus()
-        install_app_hooks(opened, focus, lambda: threading.Timer(0.1, quit_app).start())
+        try:
+            install_app_hooks(opened, focus, lambda: threading.Timer(0.1, quit_app).start())
+        except Exception:
+            log.exception("couldn't hook up macOS open/reopen/quit events")
     log.info("opening window")
     try:
         webview.start(private_mode=True, gui=gui)
