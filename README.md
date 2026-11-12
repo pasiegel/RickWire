@@ -106,7 +106,8 @@ Notes for both:
   `https://<the-pair-address>/rickwire-ca.crt` in Safari (the *Pair phone* dialog links it), then
   *Settings › General › VPN & Device Management* › install it, and *Settings › General › About › Certificate Trust
   Settings* › turn on full trust. Remote access through your proxy doesn't need this.
-- Building it yourself: `bash packaging/mac/build_mac.sh` on a Mac with Python 3.12+.
+- Building it yourself: `bash packaging/mac/build_mac.sh` on a Mac with Python 3.12+. To run the login/proxy
+  tests on a Mac, first `sudo ifconfig lo0 alias 127.0.0.2 up` (they use that address as the proxy).
 
 ## Media tools (yt-dlp, ffmpeg, Deno)
 

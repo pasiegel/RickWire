@@ -122,36 +122,40 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Build
+        id: build
         run: bash packaging/mac/build_mac.sh
 
+      # Each test runs even if an earlier one failed; failures are posted as annotations (tests/ci_report.py).
       - name: Security tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          .venv-mac/bin/python tests/audit_provider_security.py
-          .venv-mac/bin/python tests/dev/t_remote.py
-          .venv-mac/bin/python tests/dev/t_phoneurl.py
+          # the tests use 127.0.0.2 as the "proxy"; macOS only answers on 127.0.0.1 unless the alias is added
+          sudo ifconfig lo0 alias 127.0.0.2 up
+          R=".venv-mac/bin/python tests/ci_report.py"
+          ok=0
+          $R "provider key audit" .venv-mac/bin/python tests/audit_provider_security.py || ok=1
+          $R "login / proxy tests" .venv-mac/bin/python tests/dev/t_remote.py || ok=1
+          $R "phone address tests" .venv-mac/bin/python tests/dev/t_phoneurl.py || ok=1
+          exit $ok
 
       - name: Keychain (save, read back, delete a dummy key)
-        run: |
-          .venv-mac/bin/python -c "
-          from rickwire import vault
-          assert vault.BACKEND == 'the macOS Keychain', vault.BACKEND
-          vault.put('ci_dummy', 'not-a-real-key-1234')
-          assert vault.get('ci_dummy') == 'not-a-real-key-1234'
-          vault.delete('ci_dummy')
-          assert vault.get('ci_dummy') is None
-          print('keychain OK')"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: .venv-mac/bin/python tests/ci_report.py "keychain" .venv-mac/bin/python tests/check_keychain.py
 
       - name: ffmpeg + Deno downloads (checksums, Apple Silicon signing)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # only for the release lookups (shared runner IPs hit rate limits)
         run: |
-          .venv-mac/bin/python -m rickwire.tools install ffmpeg deno --dest "$RUNNER_TEMP/tools"
-          "$RUNNER_TEMP/tools/ffmpeg" -version | head -1
-          "$RUNNER_TEMP/tools/ffprobe" -version | head -1
-          "$RUNNER_TEMP/tools/deno" --version | head -1
+          R=".venv-mac/bin/python tests/ci_report.py"
+          $R "tool downloads" .venv-mac/bin/python -m rickwire.tools install ffmpeg deno --dest "$RUNNER_TEMP/tools"
+          $R "ffmpeg runs" "$RUNNER_TEMP/tools/ffmpeg" -version
+          $R "ffprobe runs" "$RUNNER_TEMP/tools/ffprobe" -version
+          $R "deno runs" "$RUNNER_TEMP/tools/deno" --version
 
       - name: Smoke test the app (start, window, menu bar, magnet + .torrent via Apple Events, quit)
-        run: .venv-mac/bin/python tests/check_mac_app.py dist/RickWire.app --shot dist/mac-screenshot.png
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: .venv-mac/bin/python tests/ci_report.py "app smoke test" .venv-mac/bin/python tests/check_mac_app.py dist/RickWire.app --shot dist/mac-screenshot.png
 
       - uses: actions/upload-artifact@v4
         if: always()
