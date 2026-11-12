@@ -166,6 +166,7 @@ still automatically when your system asks for reduced motion).
 |---|---|
 | Push or pull request | Security tests (provider key audit, login/proxy, phone address), then the Windows installer, the Windows portable zip, the Linux package and the Mac `.dmg`. Download them from the run's **Artifacts** box. |
 | Push a tag like `v0.2.8` | Same, then a GitHub **Release** with the four files attached. The tag has to match `__version__` in `rickwire/__init__.py`. |
+| Push a tag like `v0.2.8-beta.1` | The same, marked as a **pre-release**. Notes in `packaging/release_notes/<tag>.md` (if present) go at the top of the release. |
 | *Actions › Build › Run workflow* | A manual build. |
 
 - The Windows job downloads ffmpeg and Deno into the portable zip, using the workflow's own `GITHUB_TOKEN` to
