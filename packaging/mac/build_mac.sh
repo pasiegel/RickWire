@@ -39,6 +39,9 @@ rm -rf dist/RickWire.app dist/RickWire
     --collect-submodules uvicorn \
     --collect-all yt_dlp_ejs \
     --collect-all webview \
+    --collect-submodules wormhole \
+    --collect-all autobahn \
+    --collect-submodules twisted.internet \
     --copy-metadata yt-dlp \
     --hidden-import keyring.backends.macOS \
     --hidden-import pystray._darwin \

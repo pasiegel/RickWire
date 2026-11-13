@@ -14,6 +14,7 @@ const QUOTES = [
 const KIND = {
   torrent: "🧲 Torrent", torrent_url: "🧲 Torrent URL", debrid: "🔓 Hoster", mega: "Ⓜ MEGA",
   gofile: "📦 Gofile", ytdlp: "📺 Interdimensional Cable", direct: "🔗 Direct",
+  wormhole: "🕳 Wormhole", wormhole_send: "🕳 Wormhole send",
 };
 const STATE = {
   awaiting_provider: "Choose a dimension", awaiting_files: "Pick files", queued: "In the garage",
@@ -27,6 +28,7 @@ const EMPTY = {
   error: "No problems. Which is itself suspicious.",
 };
 
+let lastJobs = [];
 let me = null, filter = "all", providers = { providers: [], usable: [] };
 let pickQueue = [], picking = null, snoozed = new Set();
 let filesJob = null, filesSnoozed = new Set(), lastState = new Map();
@@ -145,6 +147,7 @@ function matches(j) {
 }
 
 function render(jobs) {
+  lastJobs = jobs;
   const list = $("#jobs");
   const visible = jobs.filter(matches);
   const ids = new Set(visible.map((j) => j.id));
@@ -202,6 +205,8 @@ function makeCard(id) {
         <button class="btn icon" data-a="pause" title="Pause">⏸</button>
         <button class="btn icon" data-a="resume" title="Resume">▶</button>
         <button class="btn icon" data-a="retry" title="Retry">↻</button>
+        <button class="btn icon" data-a="code" title="Show the wormhole code">🔑</button>
+        <button class="btn icon" data-a="whsend" title="Send with Magic Wormhole">📤</button>
         <button class="btn icon" data-a="sort" title="Rename &amp; sort into Movies / TV folders">🏷</button>
         <button class="btn icon" data-a="open" title="${me && me.platform === "darwin" ? "Show in Finder" : "Show in folder"}">📂</button>
         <button class="btn icon" data-a="files" title="Files">☰</button>
@@ -226,9 +231,12 @@ function updateCard(el, j) {
   $(".kind", el).textContent = KIND[j.kind] || j.kind;
   const st = $(".state", el);
   st.className = `state ${j.state}`;
-  st.textContent = j.state === "remote" && j.provider ? `Cooking at ${provName(j.provider)}` : STATE[j.state] || j.state;
+  const wh = j.kind === "wormhole_send" ? { remote: "Waiting for the receiver", downloading: "Sending", done: "Sent" }
+    : j.kind === "wormhole" ? { remote: "Waiting for the sender" } : {};
+  st.textContent = wh[j.state] || (j.state === "remote" && j.provider ? `Cooking at ${provName(j.provider)}` : STATE[j.state] || j.state);
   let pct = 0, nums = "";
-  if (j.state === "remote") { pct = j.remote_progress || 0; nums = `${pct.toFixed(1)}%${j.size ? " of " + fmtBytes(j.size) : ""}`; }
+  if (j.state === "remote" && j.kind.startsWith("wormhole")) { /* waiting: no progress yet */ }
+  else if (j.state === "remote") { pct = j.remote_progress || 0; nums = `${pct.toFixed(1)}%${j.size ? " of " + fmtBytes(j.size) : ""}`; }
   else if (j.size) { pct = Math.min(100, (j.done / j.size) * 100); nums = `${fmtBytes(j.done)} / ${fmtBytes(j.size)} · ${pct.toFixed(1)}%`; }
   else if (j.done) nums = fmtBytes(j.done);
   if (j.state === "done") pct = 100;
@@ -236,14 +244,16 @@ function updateCard(el, j) {
   $(".nums", el).textContent = nums;
   $(".via", el).textContent = j.provider ? `via ${provName(j.provider)}` : "";
   $(".progress > i", el).style.width = `${pct}%`;
-  $(".msg", el).textContent = j.message || "";
+  $(".msg", el).textContent = (j.wormhole_code && j.state === "remote" ? `Code: ${j.wormhole_code} · ` : "") + (j.message || "");
   const show = (a, on) => $(`[data-a=${a}]`, el).classList.toggle("hidden", !on);
   show("pick", j.state === "awaiting_provider");
   show("choose", j.state === "awaiting_files");
   show("pause", ["queued", "remote", "downloading"].includes(j.state));
   show("resume", j.state === "paused");
   show("retry", j.state === "error");
-  show("sort", !!me?.admin && j.state === "done" && !j.sorted && j.kind !== "ytdlp");
+  show("sort", !!me?.admin && j.state === "done" && !j.sorted && !["ytdlp", "wormhole_send"].includes(j.kind) && !(j.kind === "wormhole" && !j.folder && j.name === "Wormhole message"));
+  show("code", !!me?.admin && !!j.wormhole_code);
+  show("whsend", !!me?.admin && j.state === "done" && j.kind !== "wormhole_send" && j.name !== "Wormhole message");
   show("open", !!me?.admin && ["done", "downloading"].includes(j.state));
   show("files", (j.files || []).length > 1);
   const fl = $(".files", el);
@@ -266,11 +276,50 @@ async function act(id, a, el) {
     else if (a === "choose") { filesSnoozed.delete(id); openFiles(el._job); }
     else if (a === "sort") return openSort(el._job);
     else if (a === "open") await api(`/api/jobs/${id}/open`, { method: "POST" });
+    else if (a === "code") return showWormholeCode(id);
+    else if (a === "whsend") return startSend({ job: id });
     else if (a === "pick") { snoozed.delete(id); openPicker(el._job); }
     else if (a === "files") { const fl = $(".files", el); fl.classList.toggle("hidden"); renderFiles(fl, el._job); }
     else if (a === "remove") return confirmRemove(el._job);
     poll();
   } catch (e) { toast(e.message, true); }
+}
+
+// ------------------------------------------------------------------ magic wormhole
+async function startSend(body) {
+  $("#whPickDlg").close();
+  try {
+    const job = await api("/api/wormhole/send", { method: "POST", body });
+    poll();
+    toast("Opening a wormhole…");
+    for (let i = 0; i < 60; i++) {   // the code takes a second or two to arrive from the relay
+      await new Promise((r) => setTimeout(r, 1000));
+      try { return await showWormholeCode(job.id, true); } catch {}
+    }
+    toast("No code yet - press 🔑 on the card when it shows up", true);
+  } catch (e) { toast(e.message, true); }
+}
+async function pickAndSend(folder) {
+  try {
+    const r = await api(`/api/system/pick-send?folder=${folder}`, { method: "POST" });
+    if (r.path) await startSend({ path: r.path });
+  } catch (e) { toast(e.message, true); }
+}
+async function showWormholeCode(id, quiet = false) {
+  let c;
+  try { c = await api(`/api/jobs/${id}/wormhole`); } catch (e) { if (quiet) throw e; return toast(e.message, true); }
+  const job = (lastJobs || []).find((j) => j.id === id);
+  $("#whName").textContent = job ? `Sending ${job.name}` : "";
+  $("#whCode").textContent = c.code;
+  $("#whCmd").textContent = c.command;
+  $("#whQr").src = c.qr;
+  const copy = async (text, what) => {
+    try { await navigator.clipboard.writeText(text); toast(`${what} copied`); } catch { toast("Clipboard blocked", true); }
+  };
+  $("#whCopy").onclick = () => copy(c.code, "Code");
+  $("#whCopyCmd").onclick = () => copy(c.command, "Command");
+  const d = $("#whCodeDlg");
+  if (!d.open) d.showModal();
 }
 
 function confirmRemove(j) {
@@ -543,6 +592,9 @@ async function openSettings() {
   $("#s_subs").checked = s.ytdlp_subs;
   $("#s_sublangs").value = s.ytdlp_sub_langs;
   $("#s_autosubs").checked = s.ytdlp_auto_subs;
+  $("#s_whmax").value = s.wormhole_max_gb;
+  $("#s_whrelay").value = s.wormhole_relay || "";
+  $("#s_whtransit").value = s.wormhole_transit || "";
   $("#s_ffmpeg").value = s.ffmpeg_path;
   $("#s_lan").checked = s.lan_enabled;
   $("#s_https").checked = s.lan_https;
@@ -673,6 +725,8 @@ async function saveSettings() {
     ytdlp_format: $("#s_fmt").value.trim() || "bestvideo*+bestaudio/best", ytdlp_audio_format: $("#s_afmt").value,
     ytdlp_subs: $("#s_subs").checked, ytdlp_sub_langs: $("#s_sublangs").value.trim() || "en.*",
     ytdlp_auto_subs: $("#s_autosubs").checked,
+    wormhole_max_gb: Math.max(0, parseInt($("#s_whmax").value, 10) || 0),
+    wormhole_relay: $("#s_whrelay").value.trim(), wormhole_transit: $("#s_whtransit").value.trim(),
     ffmpeg_path: $("#s_ffmpeg").value.trim(), lan_enabled: $("#s_lan").checked, lan_https: $("#s_https").checked,
     lan_port: parseInt($("#s_lanport").value, 10) || 13701,
     allowed_cidrs: $("#s_cidrs").value.split(/[\s,]+/).filter(Boolean),
@@ -1028,6 +1082,9 @@ function wire() {
   $("#addBtn").onclick = addLinks;
   $("#links").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) addLinks(); });
   $("#torrentBtn").onclick = () => $("#torrentFile").click();
+  $("#whSendBtn").onclick = () => $("#whPickDlg").showModal();
+  $("#whFile").onclick = () => pickAndSend(false);
+  $("#whFolder").onclick = () => pickAndSend(true);
   $("#torrentFile").onchange = (e) => { uploadTorrents(e.target.files); e.target.value = ""; };
   $("#clearBtn").onclick = async () => { await api("/api/jobs/clear", { method: "POST" }); poll(); };
   $("#retryBtn").onclick = async () => {

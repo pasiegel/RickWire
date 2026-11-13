@@ -1,4 +1,4 @@
-"""Job queue: debrid torrents, hoster links, MEGA, Gofile, yt-dlp and direct downloads."""
+"""Job queue: debrid torrents, hoster links, MEGA, Gofile, yt-dlp, direct downloads and Magic Wormhole."""
 from __future__ import annotations
 
 import asyncio
@@ -18,13 +18,15 @@ import httpx
 from . import bencode, organize, vault
 from .config import DB_FILE, TORRENT_DIR, Settings
 from .providers import ALL as PROVIDERS, ProviderError, RemoteItem
-from .sources import classify, extract_links, gofile, is_magnet, mega, ytdl
+from .sources import classify, extract_links, gofile, is_magnet, mega, wormhole, ytdl
 from .sources.http_dl import download, make_client, safe_name, safe_relpath
 
 log = logging.getLogger("rickwire.jobs")
 
 ACTIVE = {"queued", "remote", "downloading"}
 NEEDS_PROVIDER = {"torrent", "torrent_url", "debrid"}
+WORMHOLE = {"wormhole", "wormhole_send"}   # codes work once: never retried automatically
+WORMHOLE_WAIT = 600   # a receive gives up if no sender shows up with the code in this many seconds
 RETRY_DELAYS = (10, 30, 90, 180, 300)
 _TRANSIENT_MSG = re.compile(r"HTTP Error (429|5\d\d)|\(HTTP (429|5\d\d)\)|timed? ?out|Connection (reset|aborted|refused)|"
                             r"Temporary failure|getaddrinfo|Remote end closed|IncompleteRead", re.I)
@@ -48,6 +50,17 @@ def transient(e: Exception, kind: str) -> bool:
         # 403/404/410 from a CDN usually means the debrid link expired - a retry asks for a fresh one
         return code in (408, 425, 429, 500, 502, 503, 504) or (kind in NEEDS_PROVIDER and code in (403, 404, 410))
     return bool(_TRANSIENT_MSG.search(str(e)))
+
+
+def _unique(path: Path) -> Path:
+    """path, or "name (2).ext" / "name (3)"... if something is already there."""
+    if not path.exists():
+        return path
+    stem, suffix = (path.stem, path.suffix) if path.suffix and not path.is_dir() else (path.name, "")
+    n = 2
+    while (cand := path.with_name(f"{stem} ({n}){suffix}")).exists():
+        n += 1
+    return cand
 
 
 def magnet_hash(magnet: str) -> str | None:
@@ -89,7 +102,11 @@ class JobManager:
         self.loop = asyncio.get_running_loop()
         self.sem = asyncio.Semaphore(max(1, int(self.settings["max_concurrent"])))
         for job in self.jobs.values():
-            if job["state"] in ACTIVE:
+            if job["state"] in ACTIVE and job["kind"] == "wormhole_send":
+                job.update(state="error", speed=0, wormhole_code=None,
+                           message="RickWire restarted, so that code stopped working - press Retry for a new one")
+                self._write(job)
+            elif job["state"] in ACTIVE:
                 job["state"] = "queued"
                 self.schedule(job)
         asyncio.create_task(self._ticker())
@@ -146,7 +163,28 @@ class JobManager:
 
     async def add_text(self, text: str, mode: str = "auto", provider: str | None = None,
                        audio_only: bool = False, sort: bool = False) -> list[dict]:
-        return [await self.add(link, mode, provider, audio_only, sort=sort) for link in extract_links(text)]
+        links = [wormhole.URI + c for c in wormhole.find_codes(text)] + extract_links(text)
+        return [await self.add(link, mode, provider, audio_only, sort=sort) for link in links]
+
+    async def add_send(self, path: str) -> dict:
+        """Send a file or folder with Magic Wormhole; the job shows the code to give the other person."""
+        p = Path(path)
+        if not p.exists():
+            raise ValueError("That file or folder doesn't exist")
+        job = {
+            "created": time.time(), "source": str(p), "kind": "wormhole_send", "mode": "auto", "provider": None,
+            "remote_id": None, "state": "queued", "name": p.name or str(p), "size": 0, "done": 0, "speed": 0,
+            "remote_progress": 0, "message": "", "files": [], "outputs": [], "audio_only": False,
+            "torrent_file": None, "sort": False, "wormhole_code": None,
+        }
+        cur = self.db.execute("INSERT INTO jobs (data) VALUES (?)", (json.dumps(job),))
+        self.db.commit()
+        job["id"] = cur.lastrowid
+        self.jobs[job["id"]] = job
+        self._write(job)
+        self.schedule(job)
+        self._emit(job, "added")
+        return job
 
     async def add(self, source: str, mode: str = "auto", provider: str | None = None, audio_only: bool = False,
                   torrent_bytes: bytes | None = None, torrent_filename: str | None = None, sort: bool = False) -> dict:
@@ -156,6 +194,8 @@ class JobManager:
             kind = "torrent"
             name, _ = bencode.torrent_info(torrent_bytes)
             name = name or (torrent_filename or "torrent").removesuffix(".torrent")
+        elif wormhole.is_wormhole(source):
+            kind, name = "wormhole", f"Wormhole {wormhole.code_of(source)}"
         elif is_magnet(source):
             kind, name = "torrent", bencode.magnet_name(source)
         elif mode == "debrid":
@@ -406,7 +446,7 @@ class JobManager:
                     if isinstance(e, httpx.HTTPStatusError):
                         msg = f"HTTP {e.response.status_code} from {e.request.url.host}"
                     tries = max(0, int(self.settings["auto_retry"]))
-                    if attempt < tries and transient(e, job["kind"]):
+                    if attempt < tries and job["kind"] not in WORMHOLE and transient(e, job["kind"]):
                         delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
                         attempt += 1
                         log.info("job %s: %s - retry %s/%s in %ss", jid, msg, attempt, tries, delay)
@@ -446,6 +486,8 @@ class JobManager:
             kind = job["kind"]
         if kind == "torrent":
             await self._torrent(job)
+        elif kind == "wormhole_send":   # waiting for the other person mustn't take a download slot
+            await self._wormhole_send(job)
         elif kind == "debrid":
             await self._debrid_link(job)
         else:
@@ -597,6 +639,100 @@ class JobManager:
 
         path = await download(self.http, job["source"], root, None, progress)
         job.update(name=path.name, outputs=[str(path)])
+
+    def _wormhole_spec(self) -> dict:
+        s = self.settings
+        return {"relay": (s["wormhole_relay"] or "").strip(), "transit": (s["wormhole_transit"] or "").strip()}
+
+    async def _wormhole(self, job: dict):
+        """Receive into a private staging folder, then move the result into the download folder (never overwriting)."""
+        root = Path(self.settings["download_dir"])
+        stage = root / f".wormhole-{job['id']}"
+        shutil.rmtree(stage, ignore_errors=True)
+        stage.mkdir(parents=True)
+        job.update(state="remote", message="Waiting for the sender to connect...", text=None)
+        limit_gb = float(self.settings["wormhole_max_gb"] or 0)
+
+        def on_event(ev: dict):
+            kind = ev.get("ev")
+            if kind == "offer":
+                job.update(name=ev["name"], size=ev["size"], state="downloading", message="")
+            elif kind == "progress":
+                job["state"] = "downloading"
+                job["done"], job["size"] = ev["done"], ev["total"] or job["size"]
+            elif kind == "text":
+                job["text"] = ev["text"]
+            self._check(job)
+
+        spec = {"op": "receive", "code": wormhole.code_of(job["source"]), "dest": str(stage),
+                "max_bytes": int(limit_gb * 1e9), **self._wormhole_spec()}
+        try:
+            # a used or mistyped code just waits for a sender who never comes - give up after a while
+            run = asyncio.create_task(wormhole.run(spec, on_event))
+            t0 = time.monotonic()
+            try:
+                while not run.done():
+                    await asyncio.wait({run}, timeout=1)
+                    if not run.done() and job["state"] == "remote" and time.monotonic() - t0 > WORMHOLE_WAIT:
+                        run.cancel()
+                        await asyncio.gather(run, return_exceptions=True)
+                        raise RuntimeError(f"Nobody sent anything with that code in {WORMHOLE_WAIT // 60} minutes. "
+                                           "It may have been used already - ask for a new one")
+            except asyncio.CancelledError:
+                run.cancel()
+                await asyncio.gather(run, return_exceptions=True)
+                raise
+            ok, tail, events = run.result()
+            if not ok:
+                raise RuntimeError(wormhole.friendly_error(tail, events))
+            if job.get("text") is not None:
+                text = job["text"]
+                job.update(name="Wormhole message", size=len(text.encode()), done=len(text.encode()),
+                           note="Message: " + (text if len(text) <= 300 else text[:300] + "..."))
+                return
+            moved = []
+            for entry in sorted(stage.iterdir()):
+                if entry.name.endswith(".tmp"):
+                    continue
+                dst = _unique(root / safe_name(entry.name))
+                shutil.move(str(entry), dst)
+                moved.append(dst)
+            if not moved:
+                raise RuntimeError("The transfer finished but nothing arrived")
+            files = []
+            for m in moved:
+                files += [f for f in m.rglob("*") if f.is_file()] if m.is_dir() else [m]
+            job["outputs"] = [str(f) for f in files]
+            job["folder"] = str(moved[0]) if len(moved) == 1 and moved[0].is_dir() else None
+            job["name"] = moved[0].name if len(moved) == 1 else job["name"]
+            job["done"] = job["size"] = sum(f.stat().st_size for f in files)
+        finally:
+            shutil.rmtree(stage, ignore_errors=True)
+
+    async def _wormhole_send(self, job: dict):
+        path = Path(job["source"])
+        if not path.exists():
+            raise RuntimeError("That file or folder isn't there any more")
+        job.update(state="remote", message="Opening a wormhole...", done=0, size=0, wormhole_code=None)
+
+        def on_event(ev: dict):
+            kind = ev.get("ev")
+            if kind == "code":
+                job.update(wormhole_code=ev["code"],
+                           message="Waiting for them to receive it. Give them the code (it works once).")
+                self._write(job)
+                self._emit(job, "wormhole_code")
+            elif kind == "progress":
+                if ev["done"] or job["state"] == "downloading":
+                    job.update(state="downloading", message="Sending...")
+                job["done"], job["size"] = ev["done"], ev["total"] or job["size"]
+            self._check(job)
+
+        ok, tail, events = await wormhole.run({"op": "send", "path": str(path), **self._wormhole_spec()}, on_event)
+        if not ok:
+            job["wormhole_code"] = None
+            raise RuntimeError(wormhole.friendly_error(tail, events))
+        job.update(wormhole_code=None, note="Sent through the wormhole")
 
     async def _ytdlp(self, job: dict):
         root = Path(self.settings["download_dir"])

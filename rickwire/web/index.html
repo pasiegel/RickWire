@@ -89,7 +89,7 @@
 
   <main id="view-queue">
     <section class="card add">
-      <textarea id="links" placeholder="Paste magnets, MEGA, Gofile, hoster links, YouTube, Tubi, archive.org, .mpd/.m3u8 manifests… one per line"></textarea>
+      <textarea id="links" placeholder="Paste magnets, MEGA, Gofile, hoster links, YouTube, Tubi, archive.org, .mpd/.m3u8 manifests, Magic Wormhole codes… one per line"></textarea>
       <div class="add-row">
         <select id="mode" title="How to fetch">
           <option value="auto">🌀 Auto-detect</option>
@@ -102,6 +102,7 @@
         <label class="check"><input type="checkbox" id="audioOnly"> Audio only</label>
         <label class="check" title="When it finishes, rename and move it into Movies\Title (Year)\ or TV\Show\Season 02\ inside your download folder"><input type="checkbox" class="sortPref"> 🏷 Rename &amp; sort</label>
         <div class="spacer"></div>
+        <button class="btn admin-only hidden" id="whSendBtn" title="Send a file or folder to someone with Magic Wormhole">🕳 Send…</button>
         <button class="btn" id="torrentBtn" title="Upload .torrent files">🧲 .torrent</button>
         <input type="file" id="torrentFile" accept=".torrent,application/x-bittorrent" multiple hidden>
         <button class="btn go" id="addBtn">⬇ Download</button>
@@ -181,6 +182,31 @@
   </dialog>
 
   <!-- confirm remove -->
+  <dialog id="whPickDlg">
+    <div class="dlg-head"><h2>🕳 Send with Magic Wormhole</h2></div>
+    <div class="dlg-body">
+      <p class="hint">Pick what to send. RickWire shows a code like <b>7-crossover-clockwork</b>: the other person
+        types it into RickWire, the <code>wormhole</code> command, Warp, Wormhole William or Destiny (Android / iPhone).
+        It's encrypted end to end. Both of you have to be online at the same time, RickWire must stay open until
+        they've received it, and each code works once.</p>
+      <div class="row wh-pick"><button class="btn" id="whFile">📄 A file…</button><button class="btn" id="whFolder">📁 A folder…</button></div>
+    </div>
+    <div class="dlg-foot"><button class="btn" data-close>Cancel</button></div>
+  </dialog>
+
+  <dialog id="whCodeDlg">
+    <div class="dlg-head"><h2>🕳 Wormhole code</h2></div>
+    <div class="dlg-body wh-code">
+      <div class="hint" id="whName"></div>
+      <div class="wh-big" id="whCode"></div>
+      <img id="whQr" alt="QR code for the wormhole code" width="150" height="150">
+      <div class="row"><button class="btn" id="whCopy">📋 Copy code</button><button class="btn" id="whCopyCmd">📋 Copy command</button></div>
+      <p class="hint">They can type the code into RickWire's download box, scan the QR code with Destiny, or run
+        <code id="whCmd"></code>. Keep RickWire open until it says sent.</p>
+    </div>
+    <div class="dlg-foot"><button class="btn" data-close>Close</button></div>
+  </dialog>
+
   <dialog id="rmDlg">
     <div class="dlg-head"><h2>Remove download?</h2></div>
     <div class="dlg-body">
@@ -276,6 +302,18 @@
         <label class="check"><input type="checkbox" id="s_autosubs"> Use auto-generated captions when there are no real ones</label>
         <div class="row"><span>ffmpeg path</span><input type="text" id="s_ffmpeg" placeholder="auto (RickWire's own copy, then PATH)"></div>
         <div class="hint" id="toolInfo"></div>
+      </div>
+
+      <div class="section">
+        <h3>🕳 Magic Wormhole</h3>
+        <div class="hint">Paste a wormhole code into the download box to receive; use <b>🕳 Send…</b> (or 📤 on a finished
+          download) to send. Transfers are encrypted end to end; the relay servers only pass them along.</div>
+        <div class="row"><span>Size limit (GB)</span><input type="number" id="s_whmax" min="0" max="100000"
+          title="Incoming transfers bigger than this are refused. 0 = no limit"></div>
+        <div class="row"><span>Relay server</span><input type="text" id="s_whrelay" placeholder="public default (relay.magic-wormhole.io)"
+          title="Your own mailbox server, e.g. wss://relay.example.com/v1 (leave empty for the public one)"></div>
+        <div class="row"><span>Transit relay</span><input type="text" id="s_whtransit" placeholder="public default"
+          title="Your own transit relay, e.g. tcp:relay.example.com:4001 (leave empty for the public one)"></div>
       </div>
 
       <div class="section">

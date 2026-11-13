@@ -333,3 +333,11 @@ dialog::backdrop { background: #02040acc; backdrop-filter: blur(3px); }
 .totp-setup code { font-size: 15px; letter-spacing: 1px; color: var(--neon); overflow-wrap: anywhere; }
 @media (max-width: 560px) { .totp-setup { grid-template-columns: 1fr; justify-items: center; } }
 #otp::placeholder { letter-spacing: 1px; font-size: 17px; font-weight: 500; }
+
+/* magic wormhole */
+.wh-pick { gap: 10px; justify-content: center; margin-top: 6px; }
+.wh-code { text-align: center; }
+.wh-code .row { justify-content: center; gap: 10px; }
+.wh-big { font: 700 26px/1.3 ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: .02em;
+  color: var(--portal); margin: 10px 0 12px; word-break: break-all; user-select: all; }
+#whQr { background: #fff; border-radius: 10px; padding: 8px; margin: 0 auto 12px; display: block; }

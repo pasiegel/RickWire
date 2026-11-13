@@ -41,6 +41,7 @@ class Hooks:
     """Filled in by the desktop shell; no-ops when running headless."""
     focus: Callable[[], None] = staticmethod(lambda: None)
     pick_folder: Callable[[str], str | None] = staticmethod(lambda start: None)
+    pick_send: Callable[[bool, str], str | None] = staticmethod(lambda folder, start: None)
     notify: Callable[[str, str], None] = staticmethod(lambda title, msg: None)
     restart: Callable[[], bool] = staticmethod(lambda: False)
     quit: Callable[[], None] = staticmethod(lambda: None)
@@ -52,6 +53,11 @@ class AddReq(BaseModel):
     provider: str | None = None
     audio_only: bool = False
     sort: bool = False
+
+
+class SendReq(BaseModel):
+    path: str = ""
+    job: int | None = None
 
 
 class LoginReq(BaseModel):
@@ -107,6 +113,7 @@ SETTING_TYPES = {
     "onboarded": bool, "auto_update_ytdlp": bool, "check_tool_updates": bool,
     "pick_files": bool, "auto_retry": int, "spin_portal": bool,
     "remote_enabled": bool, "trusted_proxies": list, "public_hosts": list,
+    "wormhole_relay": str, "wormhole_transit": str, "wormhole_max_gb": int,
 }
 RESTART_KEYS = {"lan_enabled", "lan_https", "lan_port"}
 
@@ -181,10 +188,12 @@ def create_app(settings: Settings, manager: JobManager, auth: Auth, hooks: Hooks
     app = FastAPI(title="RickWire", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(Guard, auth=auth, settings=settings)
 
-    def view(job: dict) -> dict:
+    def view(job: dict, admin: bool = True) -> dict:
         j = {k: v for k, v in job.items() if k not in ("torrent_file", "outputs")}
         if j["kind"] == "torrent" and j["source"].startswith("magnet:"):
             j["source"] = j["source"][:80] + "..."
+        if j["kind"] == "wormhole_send" and not admin:   # a send's code and local path stay on the desktop
+            j["source"], j["wormhole_code"] = j["name"], None
         j["files"] = j["files"][:200]
         return j
 
@@ -359,8 +368,8 @@ def create_app(settings: Settings, manager: JobManager, auth: Auth, hooks: Hooks
     # ------------------------------------------------------------- jobs
     @app.get("/api/jobs")
     async def jobs(request: Request):
-        require(request)
-        return {"jobs": [view(j) for j in manager.list()], "ts": time.time()}
+        sess = require(request)
+        return {"jobs": [view(j, sess.admin) for j in manager.list()], "ts": time.time()}
 
     @app.post("/api/jobs")
     async def add(body: AddReq, request: Request):
@@ -477,9 +486,48 @@ def create_app(settings: Settings, manager: JobManager, auth: Auth, hooks: Hooks
     async def open_folder(jid: int, request: Request):
         require(request, admin=True)
         job = _job(jid)
-        target = Path(job.get("folder") or (job["outputs"][0] if job.get("outputs") else settings["download_dir"]))
+        if job["kind"] == "wormhole_send":   # show what was sent (it was never in the download folder)
+            target = Path(job["source"])
+        else:
+            target = Path(job.get("folder") or (job["outputs"][0] if job.get("outputs") else settings["download_dir"]))
         open_in_file_manager(target if target.exists() else Path(settings["download_dir"]))
         return {"ok": True}
+
+    # ------------------------------------------------------------- magic wormhole
+    @app.post("/api/wormhole/send")
+    async def wormhole_send(body: SendReq, request: Request):
+        require(request, admin=True)   # sends files from this PC: desktop only
+        path = body.path.strip()
+        if body.job is not None:
+            src = _job(body.job)
+            if src["state"] != "done" or not (src.get("folder") or src.get("outputs")):
+                raise HTTPException(400, "That download has no files to send")
+            path = src.get("folder") or (src["outputs"][0] if len(src["outputs"]) == 1 else str(Path(src["outputs"][0]).parent))
+        if not path:
+            raise HTTPException(400, "Pick a file or folder to send")
+        try:
+            return view(await manager.add_send(path))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/jobs/{jid}/wormhole")
+    async def wormhole_code(jid: int, request: Request):
+        require(request, admin=True)
+        job = _job(jid)
+        code = job.get("wormhole_code")
+        if not code:
+            raise HTTPException(404, "No code yet")
+        import qrcode
+        import qrcode.image.svg
+        buf = io.BytesIO()
+        qrcode.make(f"wormhole-transfer:{code}", image_factory=qrcode.image.svg.SvgPathImage, box_size=10).save(buf)
+        return {"code": code, "uri": f"wormhole-transfer:{code}", "command": f"wormhole receive {code}",
+                "qr": "data:image/svg+xml;base64," + base64.b64encode(buf.getvalue()).decode()}
+
+    @app.post("/api/system/pick-send")
+    async def pick_send(request: Request, folder: bool = False):
+        require(request, admin=True)
+        return {"path": await asyncio.to_thread(hooks.pick_send, folder, settings["download_dir"])}
 
     # ------------------------------------------------------------- providers
     @app.get("/api/providers")
@@ -561,6 +609,14 @@ def create_app(settings: Settings, manager: JobManager, auth: Auth, hooks: Hooks
             clean["ytdlp_sub_langs"] = clean["ytdlp_sub_langs"].strip() or "en.*"
             if len(clean["ytdlp_sub_langs"]) > 100 or not re.fullmatch(r"[\w.*,;\- ]+", clean["ytdlp_sub_langs"]):
                 raise HTTPException(400, "Subtitle languages: use codes like en, es or en.* separated by commas")
+        if "wormhole_max_gb" in clean:
+            clean["wormhole_max_gb"] = max(0, min(100000, clean["wormhole_max_gb"]))
+        if clean.get("wormhole_relay", "").strip() and not re.fullmatch(r"wss?://[\w.\-]+(:\d+)?(/\S*)?",
+                                                                        clean["wormhole_relay"].strip()):
+            raise HTTPException(400, "Wormhole relay: use a ws:// or wss:// address, e.g. wss://relay.example.com/v1")
+        if clean.get("wormhole_transit", "").strip() and not re.fullmatch(r"tcp:[\w.\-]+:\d+",
+                                                                          clean["wormhole_transit"].strip()):
+            raise HTTPException(400, "Wormhole transit relay: use tcp:host:port, e.g. tcp:relay.example.com:4001")
         if "hoster_mode" in clean and clean["hoster_mode"] not in ("debrid_first", "native_first"):
             raise HTTPException(400, "Bad hoster_mode")
         if "download_dir" in clean:

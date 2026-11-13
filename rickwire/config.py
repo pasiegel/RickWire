@@ -91,6 +91,9 @@ DEFAULTS: dict = {
     "ytdlp_sub_langs": "en.*",     # comma-separated yt-dlp languages / regexes ("en.*" = en, en-US, en-GB...)
     "ytdlp_auto_subs": False,      # also accept YouTube's auto-generated captions
     "ffmpeg_path": "",
+    "wormhole_relay": "",          # Magic Wormhole mailbox server (empty = the public default)
+    "wormhole_transit": "",        # transit relay, e.g. tcp:relay.example.com:4001 (empty = the public default)
+    "wormhole_max_gb": 50,         # refuse incoming wormhole transfers bigger than this (0 = no limit)
     "local_port": 13700,           # 127.0.0.1 only, desktop window
     "lan_enabled": True,
     "lan_port": 13701,             # LAN / phone PWA

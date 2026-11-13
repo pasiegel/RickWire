@@ -45,6 +45,22 @@ often, so you can edit the source URLs in Settings › *Search & Latest sources*
   `TV\Show\Season 02\Show - S02E07.mkv` inside your download folder, with matching subtitles. Samples, games
   and anything it can't recognise are left alone, and existing files are never overwritten. Finished jobs that
   weren't sorted have a 🏷 button that previews the new names before moving anything.
+- **🕳 Magic Wormhole** ([magic-wormhole](https://github.com/magic-wormhole/magic-wormhole)): send files to,
+  and get files from, anyone with a short code like `7-crossover-clockwork`. Encrypted end to end; the relay
+  servers only pass the data along.
+  - **Receive:** paste the code (or `wormhole-transfer:<code>`, or a whole `wormhole receive <code>` line) into
+    the download box, on the PC or a paired phone. Files land in your download folder (never overwriting:
+    `name (2).ext`); folders arrive unpacked. A text message shows up on the card.
+  - **Send** (desktop only): **🕳 Send…** next to *Download* (pick a file or folder), or **📤** on a finished
+    download. RickWire shows the code, a QR code (for the Destiny app) and the `wormhole receive` command;
+    **🔑** on the card shows them again. The other side can use RickWire, the `wormhole` command, Warp,
+    Wormhole William or Destiny (Android/iPhone).
+  - Both sides must be online at once, and RickWire has to stay open until the other side has it. Each code
+    works once; a used or mistyped code gives up after 10 minutes. Sends aren't resumed after a restart (press
+    ↻ for a new code).
+  - Settings › *Downloads* › *Magic Wormhole*: a size limit for incoming transfers (50 GB by default), and your
+    own relay / transit relay servers if you run them (empty = the public ones). Phones never see a send's code
+    or local path, and can't start a send.
 
 ## Install
 

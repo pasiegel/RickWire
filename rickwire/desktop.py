@@ -145,6 +145,10 @@ def make_tray(on_open, on_quit, gui: str | None = None):
 
 
 def main(argv: list[str] | None = None):
+    args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["--wormhole-worker"]:   # RickWire.exe starting itself as a Magic Wormhole transfer process
+        from .wormhole_worker import main as worker
+        sys.exit(worker(args[1:]))
     try:
         _main(argv)
     except SystemExit:
@@ -280,6 +284,13 @@ def _main(argv: list[str] | None = None):
         res = window.create_file_dialog(webview.FileDialog.FOLDER, directory=start)
         return res[0] if res else None
 
+    def pick_send(folder: bool, start: str):
+        if not window:
+            return None
+        kind = webview.FileDialog.FOLDER if folder else webview.FileDialog.OPEN
+        res = window.create_file_dialog(kind, directory=start)
+        return res[0] if res else None
+
     def on_job(job: dict, event: str):
         if event == "done":
             notify("Wubba lubba dub dub!", job["name"][:120])
@@ -291,6 +302,7 @@ def _main(argv: list[str] | None = None):
             notify("Pick your files, Morty", f"{job['name'][:100]} has several files - choose which to download")
 
     hooks.focus, hooks.notify, hooks.pick_folder, hooks.restart = focus, notify, pick_folder, restart
+    hooks.pick_send = pick_send
     hooks.quit = lambda: threading.Timer(0.3, quit_app).start()
     backend.manager.listeners.append(on_job)
     tray, tray_alive = make_tray(focus, quit_app, gui)

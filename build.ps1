@@ -31,6 +31,9 @@ Write-Host "== PyInstaller" -ForegroundColor Green
     --collect-submodules uvicorn `
     --collect-all yt_dlp_ejs `
     --collect-all webview `
+    --collect-submodules wormhole `
+    --collect-all autobahn `
+    --collect-submodules twisted.internet `
     --copy-metadata yt-dlp `
     --hidden-import keyring.backends.Windows `
     --hidden-import pystray._win32 `

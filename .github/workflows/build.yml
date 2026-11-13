@@ -74,6 +74,12 @@ jobs:
           $p = Start-Process dist\RickWire\RickWire.exe -ArgumentList "--help" -PassThru -Wait
           if ($p.ExitCode -ne 0) { throw "RickWire.exe --help exited with $($p.ExitCode)" }
 
+      - name: Magic Wormhole from the built exe (send + receive through the public relay)
+        shell: pwsh
+        run: |
+          .venv\Scripts\python tests\check_wormhole_worker.py dist\RickWire\RickWire.exe
+          if ($LASTEXITCODE) { throw "wormhole check failed" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -158,6 +164,10 @@ jobs:
       - name: Smoke test the app (start, window, menu bar, magnet + .torrent via Apple Events, quit)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: .venv-mac/bin/python tests/ci_report.py "app smoke test" .venv-mac/bin/python tests/check_mac_app.py dist/RickWire.app --shot dist/mac-screenshot.png
+
+      - name: Magic Wormhole from the built app (send + receive through the public relay)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: .venv-mac/bin/python tests/ci_report.py "wormhole" .venv-mac/bin/python tests/check_wormhole_worker.py dist/RickWire.app/Contents/MacOS/RickWire
 
       - uses: actions/upload-artifact@v4
         if: always()
