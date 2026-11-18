@@ -39,6 +39,7 @@ class Discover:
         self.client = httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": UA})
         self._cache: dict[str, tuple[float, object]] = {}
         self._img: dict[str, tuple[str, bytes]] = {}
+        self._yts_hosts: set[str] = set()
 
     async def _get(self, url: str, ttl: int, params: dict | None = None):
         key = url + "?" + urlencode(params or {})
@@ -101,6 +102,7 @@ class Discover:
             data = r.json()["data"]
         except (ValueError, KeyError):
             raise DiscoverError("YTS returned something unexpected") from None
+        self._learn_host(r.url)
         movies = []
         for m in data.get("movies") or []:
             torrents = []
@@ -114,6 +116,7 @@ class Discover:
                     "codec": t.get("video_codec"), "audio": t.get("audio_channels"),
                     "magnet": _magnet(t["hash"], name, YTS_TRACKERS),
                 })
+            self._learn_host(m.get("medium_cover_image"))
             movies.append({
                 "title": m.get("title"), "year": m.get("year"), "rating": m.get("rating"), "runtime": m.get("runtime"),
                 "genres": m.get("genres") or [], "summary": (m.get("summary") or "")[:400],
@@ -173,18 +176,36 @@ class Discover:
 
     # ------------------------------------------------------------------ poster proxy
     def image_hosts(self) -> set[str]:
-        """Only hosts of the configured YTS API can be proxied - this is not an open proxy."""
-        h = (urlparse(self.settings["yts_api"]).hostname or "").lower()
-        root = ".".join(h.split(".")[-2:])
-        return {h, root, f"img.{root}", f"www.{root}"}
+        """Only YTS hosts can be proxied - this is not an open proxy. That's the configured API's domain plus the
+        domains the API itself answered from / put in its cover links (YTS moves domains: yts.gg -> yts.pw)."""
+        out = set()
+        for h in {(urlparse(self.settings["yts_api"]).hostname or "").lower()} | self._yts_hosts:
+            root = ".".join(h.split(".")[-2:])
+            out |= {h, root, f"img.{root}", f"www.{root}"}
+        return out
+
+    def _learn_host(self, url) -> None:
+        h = (urlparse(str(url or "")).hostname or "").lower()
+        if h and len(self._yts_hosts) < 20:
+            self._yts_hosts.add(h)
 
     async def image(self, url: str) -> tuple[str, bytes]:
         if url in self._img:
             return self._img[url]
-        u = urlparse(url)
-        if u.scheme != "https" or (u.hostname or "").lower() not in self.image_hosts():
-            raise DiscoverError("Image host not allowed")
-        r = await self.client.get(url)
+        allowed = self.image_hosts()
+        for _ in range(4):   # follow redirects by hand so every hop is checked against the allow-list
+            u = urlparse(url)
+            if u.scheme != "https" or (u.hostname or "").lower() not in allowed:
+                raise DiscoverError("Image host not allowed")
+            try:
+                r = await self.client.get(url, follow_redirects=False)
+            except httpx.HTTPError:
+                raise DiscoverError("Image unreachable") from None
+            if r.status_code not in (301, 302, 303, 307, 308):
+                break
+            url = str(r.url.join(r.headers.get("location", "")))
+        else:
+            raise DiscoverError("Too many redirects")
         ctype = r.headers.get("content-type", "").split(";")[0]
         if r.status_code != 200 or not ctype.startswith("image/") or ctype == "image/svg+xml" or len(r.content) > MAX_IMAGE:
             raise DiscoverError("Not an image")

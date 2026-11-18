@@ -85,10 +85,19 @@ The installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget i
 links plus step-by-step instructions), or **skip it** and add one later in ⚙ Settings. It then offers to download
 the media tools. You can run it again from *Settings › Window*.
 
-**Updating:** run the new `RickWire-Setup-<version>.exe`. It installs over the old copy, closing it first if
-it's running. Settings, queue, paired phones and certificates (`%APPDATA%\RickWire`), API keys (Credential
-Manager), downloaded tools and the magnet handler are all kept. For the portable copy, replace everything except
-the `data\` and `tools\` folders. To check an upgrade yourself:
+**Updating:** every version installs over the previous one; you never need to uninstall first. Let running
+downloads finish first (anything still active resumes after the update, but a wormhole *send* needs a new code).
+
+| | How | What's kept |
+|---|---|---|
+| **Windows installer** | Run the new `RickWire-Setup-<version>.exe`. It closes RickWire if it's running and installs over it; leave *Launch RickWire* ticked on the last page to start it again. | Settings, queue, paired phones, certificates (`%APPDATA%\RickWire`), API keys (Credential Manager), downloaded tools, the magnet/.torrent handler, shortcuts |
+| **Windows portable** | Replace everything in the folder **except** `data\` and `tools\`. | Everything in `data\` (per PC) and the tools |
+| **macOS** | Quit RickWire, drag the new RickWire from the `.dmg` into Applications and choose **Replace**. macOS may ask once to let it use the Keychain (*Always Allow*). | Everything in `~/Library/Application Support/RickWire`, keys in the Keychain |
+| **Linux** | Quit RickWire and unpack the new tarball over the old folder (or into a new one and move `data/` across). The next `./run.sh` installs any new Python packages by itself. | `data/<hostname>/`, keys in your keyring |
+
+Phones keep working: they trust RickWire's own certificate authority, which an update never changes (the server
+certificate it signs is re-issued automatically when the PC's network addresses change). Refresh the RickWire tab
+or home-screen app once after an update to load the new version. To check a Windows upgrade yourself:
 `.venv\Scripts\python tests\check_upgrade.py --installer dist\RickWire-Setup-<version>.exe`
 compares all of the above before and after.
 

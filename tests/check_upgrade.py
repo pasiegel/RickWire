@@ -65,7 +65,10 @@ def snapshot(app: Path, data: Path) -> dict:
         "settings": {k: v for k, v in cfg.items() if k not in VOLATILE},
         "paired phones": [d.get("name") for d in cfg.get("devices", [])],
         "queue": jobs,
-        "tls certificates": {p.name: sha(p) for p in sorted((data / "tls").glob("*"))} if (data / "tls").exists() else {},
+        # only the CA matters to phones: the server certificate is re-issued (by that same CA) whenever this PC's
+        # network addresses change - VPN / virtual adapters coming and going - so it's allowed to differ
+        "tls certificates (CA)": {p.name: sha(p) for p in sorted((data / "tls").glob("rickwire-ca.*"))}
+                                 if (data / "tls").exists() else {},
         "api keys (hashed)": keys,
         "tools": tools,
         "magnet handler": reg(r"Software\Classes\magnet\shell\open\command"),
